@@ -1,0 +1,11 @@
+menu "HMI Node Configuration"
+
+config HMI_NODE_WIFI_SSID
+    string "Wi-Fi SSID"
+    default "YourSSID"
+
+config HMI_NODE_WIFI_PASS
+    string "Wi-Fi Password"
+    default "YourPassword"
+
+endmenu
