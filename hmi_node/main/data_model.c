@@ -4,11 +4,28 @@
 
 #include "proto_codec.h"
 #include "proto_crc32.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static hmi_data_snapshot_t s_snapshot;
+static SemaphoreHandle_t s_mutex;
 
 void hmi_data_model_init(void) {
     memset(&s_snapshot, 0, sizeof(s_snapshot));
+    s_mutex = xSemaphoreCreateMutex();
+}
+
+static bool lock_snapshot(TickType_t timeout) {
+    if (s_mutex == NULL) {
+        return false;
+    }
+    return xSemaphoreTake(s_mutex, timeout) == pdTRUE;
+}
+
+static void unlock_snapshot(void) {
+    if (s_mutex != NULL) {
+        xSemaphoreGive(s_mutex);
+    }
 }
 
 static void parse_sht20(cJSON *array) {
@@ -109,6 +126,24 @@ static void parse_pwm(cJSON *pwm_obj) {
     }
 }
 
+static void parse_network(cJSON *network_obj) {
+    if (!cJSON_IsObject(network_obj)) {
+        return;
+    }
+    cJSON *wifi = cJSON_GetObjectItemCaseSensitive(network_obj, "wifi");
+    cJSON *ws = cJSON_GetObjectItemCaseSensitive(network_obj, "ws");
+    cJSON *clients = cJSON_GetObjectItemCaseSensitive(network_obj, "clients");
+    if (cJSON_IsNumber(wifi)) {
+        s_snapshot.network.wifi_connected = (wifi->valueint >= 2);
+    }
+    if (cJSON_IsNumber(ws)) {
+        s_snapshot.network.ws_connected = (ws->valueint >= 2);
+    }
+    if (cJSON_IsNumber(clients)) {
+        s_snapshot.network.remote_clients = (uint8_t)clients->valueint;
+    }
+}
+
 bool hmi_data_model_apply_update(const uint8_t *payload, size_t len) {
     if (payload == NULL || len == 0) {
         return false;
@@ -119,6 +154,10 @@ bool hmi_data_model_apply_update(const uint8_t *payload, size_t len) {
     }
     bool updated = false;
     if (env.type == PROTO_MSG_SENSOR_UPDATE && env.payload != NULL) {
+        if (!lock_snapshot(pdMS_TO_TICKS(50))) {
+            proto_envelope_free(&env);
+            return false;
+        }
         cJSON *sht20 = cJSON_GetObjectItemCaseSensitive(env.payload, "sht20");
         cJSON *ds18 = cJSON_GetObjectItemCaseSensitive(env.payload, "ds18b20");
         cJSON *gpio = cJSON_GetObjectItemCaseSensitive(env.payload, "gpio");
@@ -127,15 +166,50 @@ bool hmi_data_model_apply_update(const uint8_t *payload, size_t len) {
         parse_ds18b20(ds18);
         parse_gpio(gpio);
         parse_pwm(pwm);
+        cJSON *network = cJSON_GetObjectItemCaseSensitive(env.payload, "network");
+        parse_network(network);
         s_snapshot.last_ts_ms = env.timestamp_ms;
         s_snapshot.last_crc = env.crc32;
         updated = true;
+        unlock_snapshot();
     }
     proto_envelope_free(&env);
     return updated;
 }
 
-const hmi_data_snapshot_t *hmi_data_model_peek(void) {
-    return &s_snapshot;
+bool hmi_data_model_get_snapshot(hmi_data_snapshot_t *out_snapshot) {
+    if (out_snapshot == NULL) {
+        return false;
+    }
+    if (!lock_snapshot(pdMS_TO_TICKS(20))) {
+        return false;
+    }
+    *out_snapshot = s_snapshot;
+    unlock_snapshot();
+    return true;
+}
+
+void hmi_data_model_set_wifi_connected(bool connected) {
+    if (!lock_snapshot(pdMS_TO_TICKS(20))) {
+        return;
+    }
+    s_snapshot.network.wifi_connected = connected;
+    unlock_snapshot();
+}
+
+void hmi_data_model_set_ws_connected(bool connected) {
+    if (!lock_snapshot(pdMS_TO_TICKS(20))) {
+        return;
+    }
+    s_snapshot.network.ws_connected = connected;
+    unlock_snapshot();
+}
+
+void hmi_data_model_set_ws_retries(uint32_t attempts) {
+    if (!lock_snapshot(pdMS_TO_TICKS(20))) {
+        return;
+    }
+    s_snapshot.network.reconnect_attempts = attempts;
+    unlock_snapshot();
 }
 

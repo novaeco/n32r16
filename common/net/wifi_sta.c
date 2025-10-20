@@ -13,6 +13,7 @@ static const char *TAG = "wifi_sta";
 static EventGroupHandle_t s_wifi_event_group;
 static esp_netif_t *s_netif;
 static esp_netif_ip_info_t s_ip_info;
+static bool s_auto_reconnect;
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id,
                                void *event_data) {
@@ -22,8 +23,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
                 esp_wifi_connect();
                 break;
             case WIFI_EVENT_STA_DISCONNECTED:
-                ESP_LOGW(TAG, "Wi-Fi disconnected, reconnecting");
-                esp_wifi_connect();
+                ESP_LOGW(TAG, "Wi-Fi disconnected");
+                if (s_auto_reconnect) {
+                    ESP_LOGI(TAG, "Attempting automatic reconnect");
+                    esp_wifi_connect();
+                }
                 xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
                 break;
             default:
@@ -65,6 +69,10 @@ esp_err_t wifi_sta_init(const wifi_sta_config_t *cfg) {
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    s_auto_reconnect = cfg->auto_reconnect;
+    if (s_auto_reconnect) {
+        ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
+    }
     ESP_ERROR_CHECK(esp_wifi_start());
 
     return ESP_OK;

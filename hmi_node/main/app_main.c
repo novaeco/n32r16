@@ -15,9 +15,22 @@
 
 static const char *TAG = "hmi_main";
 
+static void hmi_wifi_event_forwarder(void *arg, esp_event_base_t base, int32_t id, void *data) {
+    (void)arg;
+    (void)data;
+    if (base == WIFI_EVENT) {
+        if (id == WIFI_EVENT_STA_START) {
+            hmi_data_model_set_wifi_connected(false);
+        } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
+            hmi_data_model_set_wifi_connected(false);
+        }
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        hmi_data_model_set_wifi_connected(true);
+    }
+}
+
 void app_main(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
-    time_sync_init();
     hmi_data_model_init();
 
     wifi_sta_config_t wifi_cfg = {
@@ -25,8 +38,12 @@ void app_main(void) {
         .password = CONFIG_HMI_NODE_WIFI_PASS,
         .auto_reconnect = true,
     };
+    hmi_data_model_set_wifi_connected(false);
     ESP_ERROR_CHECK(wifi_sta_init(&wifi_cfg));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &hmi_wifi_event_forwarder, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &hmi_wifi_event_forwarder, NULL));
     wifi_sta_wait_connected();
+    time_sync_init();
     ESP_ERROR_CHECK(mdns_init());
 
     t_ui_start();

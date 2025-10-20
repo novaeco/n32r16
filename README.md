@@ -93,9 +93,10 @@ Ensure the display backlight, power rails, and I²C pull-ups follow Waveshare re
   * `t_io` — Initializes PCA9685/MCP23017, applies queued I/O commands (PWM duty & GPIO writes), periodically snapshots states into the data model.
   * `t_heartbeat` — Toggles the status LED once per second.
 * **Networking**
-  * Wi-Fi STA with automatic reconnect.
-  * mDNS advertiser `_hmi-sensor._tcp` on port 8080.
-  * WebSocket server (`/ws`) streaming JSON envelopes with CRC32.
+  * Wi-Fi STA with automatic reconnect and modem power-save when configured.
+  * mDNS advertiser `_hmi-sensor._tcp` on port **8443**.
+  * TLS-enabled WebSocket server (`wss://<host>:8443/ws`) accepting multiple HMI clients, replaying the latest snapshot on join and validating send return codes.
+  * Periodic SNTP synchronization updates snapshot timestamps when UTC is available.
 * **Protocol**
   * JSON payload schema v1 with optional CBOR (compile-time switch `CONFIG_USE_CBOR`).
   * CRC32 appended at envelope level (`proto_crc32` component).
@@ -111,8 +112,9 @@ Ensure the display backlight, power rails, and I²C pull-ups follow Waveshare re
   * LVGL v9 tabbed dashboard with: sensor tiles, live chart (128-point history), GPIO status page, PWM sliders, and settings overview.
   * Dark theme styling with 1024×600 layout tuned to 160 DPI.
 * **Networking**
-  * Wi-Fi STA to same AP as sensor node.
-  * mDNS query for `_hmi-sensor._tcp` resolves WebSocket endpoint.
+  * Wi-Fi STA to the same AP as the sensor node with live status propagated to the data model.
+  * mDNS query for `_hmi-sensor._tcp` resolves the TLS WebSocket endpoint.
+  * Hardened WebSocket client with exponential backoff, TLS certificate pinning (shared self-signed bundle), and connection state reflected into the UI model.
   * Incoming payloads decoded into `hmi_data_model`, UI notified via semaphore.
 
 ## Testing
@@ -123,7 +125,7 @@ Run Unity-based component tests via ESP-IDF’s `-T` option from either project 
 idf.py -T tests
 ```
 
-The current suite validates the JSON envelope encode/decode path for sensor updates.
+The suite currently covers both protocol encode/decode logic and the shared ring-buffer utility used by network backpressure paths.
 
 ## Continuous Integration
 
