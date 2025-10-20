@@ -20,9 +20,22 @@
 
 static const char *TAG = "sensor_main";
 
+static void wifi_event_forwarder(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+    (void)arg;
+    (void)event_data;
+    if (event_base == WIFI_EVENT) {
+        if (event_id == WIFI_EVENT_STA_START) {
+            data_model_set_wifi_state(NETWORK_STATE_CONNECTING);
+        } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            data_model_set_wifi_state(NETWORK_STATE_CONNECTING);
+        }
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        data_model_set_wifi_state(NETWORK_STATE_READY);
+    }
+}
+
 void app_main(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
-    time_sync_init();
     data_model_init();
 
     ESP_ERROR_CHECK(i2c_bus_init(I2C_NUM_0, I2C_SDA_GPIO, I2C_SCL_GPIO, 400000));
@@ -32,10 +45,14 @@ void app_main(void) {
         .password = CONFIG_SENSOR_NODE_WIFI_PASS,
         .auto_reconnect = true,
     };
+    data_model_set_wifi_state(NETWORK_STATE_CONNECTING);
     ESP_ERROR_CHECK(wifi_sta_init(&wifi_cfg));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_forwarder, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_forwarder, NULL));
     wifi_sta_wait_connected();
+    time_sync_init();
 
-    ESP_ERROR_CHECK(mdns_start_service("sensor-node", "Sensor Node", 8080, "_hmi-sensor"));
+    ESP_ERROR_CHECK(mdns_start_service("sensor-node", "Sensor Node", 8443, "_hmi-sensor"));
     ESP_ERROR_CHECK(sensor_ws_server_start());
 
     t_io_start();

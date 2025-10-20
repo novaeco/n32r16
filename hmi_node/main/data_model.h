@@ -30,9 +30,18 @@ typedef struct {
     uint16_t pwm_freq;
     uint32_t last_crc;
     uint64_t last_ts_ms;
+    struct {
+        bool wifi_connected;
+        bool ws_connected;
+        uint8_t remote_clients;
+        uint32_t reconnect_attempts;
+    } network;
 } hmi_data_snapshot_t;
 
 void hmi_data_model_init(void);
 bool hmi_data_model_apply_update(const uint8_t *payload, size_t len);
-const hmi_data_snapshot_t *hmi_data_model_peek(void);
+bool hmi_data_model_get_snapshot(hmi_data_snapshot_t *out_snapshot);
+void hmi_data_model_set_wifi_connected(bool connected);
+void hmi_data_model_set_ws_connected(bool connected);
+void hmi_data_model_set_ws_retries(uint32_t attempts);
 
