@@ -1,0 +1,15 @@
+menu "Sensor Node Configuration"
+
+config SENSOR_NODE_WIFI_SSID
+    string "Wi-Fi SSID"
+    default "YourSSID"
+    help
+        Station SSID used by the sensor node.
+
+config SENSOR_NODE_WIFI_PASS
+    string "Wi-Fi Password"
+    default "YourPassword"
+    help
+        Station password used by the sensor node.
+
+endmenu
