@@ -4,6 +4,7 @@
 #include "common/net/wifi_manager.h"
 #include "common/net/ws_client.h"
 #include "common/proto/messages.h"
+#include "common/util/monotonic.h"
 #include "cert_store.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -11,20 +12,24 @@
 #include "lwip/inet.h"
 #include "mdns.h"
 #include "sdkconfig.h"
+#include <string.h>
 
 static const char *TAG = "hmi_ws";
 
 static hmi_data_model_t *s_model;
 static bool s_use_cbor;
+static uint32_t s_next_command_seq;
 
 static void handle_sensor_update(const uint8_t *data, size_t len, uint32_t crc)
 {
     proto_sensor_update_t update;
     if (!proto_decode_sensor_update(data, len, s_use_cbor, &update, crc)) {
         ESP_LOGW(TAG, "Failed to decode sensor update");
+        hmi_data_model_set_crc_status(s_model, false);
         return;
     }
     hmi_data_model_set_update(s_model, &update);
+    hmi_data_model_set_crc_status(s_model, true);
 }
 
 static void ws_rx(const uint8_t *data, size_t len, uint32_t crc, void *ctx)
@@ -71,6 +76,7 @@ void hmi_ws_client_start(hmi_data_model_t *model)
 #else
     s_use_cbor = false;
 #endif
+    s_next_command_seq = 0;
 
     wifi_manager_config_t wifi_cfg = {
         .power_save = false,
@@ -109,4 +115,31 @@ void hmi_ws_client_stop(void)
 bool hmi_ws_client_is_connected(void)
 {
     return ws_client_is_connected();
+}
+
+esp_err_t hmi_ws_client_send_command(const proto_command_t *cmd)
+{
+    if (!cmd) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!hmi_ws_client_is_connected()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    proto_command_t local = *cmd;
+    local.timestamp_ms = monotonic_time_ms();
+    local.sequence_id = ++s_next_command_seq;
+
+    uint8_t payload[PROTO_MAX_COMMAND_SIZE];
+    size_t payload_len = sizeof(payload);
+    uint32_t crc = 0;
+    if (!proto_encode_command_into(&local, s_use_cbor, payload, &payload_len, &crc)) {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    if (payload_len + sizeof(uint32_t) > sizeof(payload) + sizeof(uint32_t)) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    uint8_t frame[PROTO_MAX_COMMAND_SIZE + sizeof(uint32_t)];
+    memcpy(frame, &crc, sizeof(uint32_t));
+    memcpy(frame + sizeof(uint32_t), payload, payload_len);
+    return ws_client_send(frame, payload_len + sizeof(uint32_t));
 }
