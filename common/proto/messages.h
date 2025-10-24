@@ -55,10 +55,12 @@ typedef struct {
     } gpio_write;
 } proto_command_t;
 
-bool proto_encode_sensor_update(const proto_sensor_update_t *msg, bool use_cbor,
-                                uint8_t **out_buf, size_t *out_len, uint32_t *crc32);
-bool proto_encode_command(const proto_command_t *msg, bool use_cbor,
-                          uint8_t **out_buf, size_t *out_len, uint32_t *crc32);
+bool proto_encode_sensor_update_into(const proto_sensor_update_t *msg, bool use_cbor, uint8_t *buffer,
+                                     size_t *buffer_len, uint32_t *crc32);
+bool proto_encode_command_into(const proto_command_t *msg, bool use_cbor, uint8_t *buffer,
+                               size_t *buffer_len, uint32_t *crc32);
 bool proto_decode_command(const uint8_t *payload, size_t payload_len, bool is_cbor,
                           proto_command_t *out_msg, uint32_t expected_crc32);
+bool proto_decode_sensor_update(const uint8_t *payload, size_t payload_len, bool is_cbor,
+                                proto_sensor_update_t *out_msg, uint32_t expected_crc32);
 

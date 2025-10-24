@@ -1,13 +1,23 @@
 #pragma once
 
 #include "common/proto/messages.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "onewire_bus.h"
 #include <stdbool.h>
+
+#define SENSOR_DATA_MODEL_MAX_MESSAGE_SIZE 2048U
+#define SENSOR_DATA_MODEL_BUFFER_COUNT 2U
 
 typedef struct {
     proto_sensor_update_t current;
     proto_sensor_update_t last_published;
     bool initialized;
+    SemaphoreHandle_t mutex;
+    StaticSemaphore_t mutex_storage;
+    uint8_t encode_buffers[SENSOR_DATA_MODEL_BUFFER_COUNT][SENSOR_DATA_MODEL_MAX_MESSAGE_SIZE];
+    size_t encode_lengths[SENSOR_DATA_MODEL_BUFFER_COUNT];
+    size_t next_encode_index;
 } sensor_data_model_t;
 
 void data_model_init(sensor_data_model_t *model);

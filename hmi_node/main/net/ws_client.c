@@ -4,11 +4,12 @@
 #include "common/net/wifi_manager.h"
 #include "common/net/ws_client.h"
 #include "common/proto/messages.h"
+#include "cert_store.h"
 #include "esp_log.h"
-#include "mdns.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/inet.h"
+#include "mdns.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "hmi_ws";
@@ -48,7 +49,7 @@ static bool discover_service(char *uri, size_t uri_len)
                     char ip[64];
                     if (r->addr->addr.type == IPADDR_TYPE_V4) {
                         ip4addr_ntoa_r(&r->addr->addr.u_addr.ip4, ip, sizeof(ip));
-                        snprintf(uri, uri_len, "ws://%s:%u/ws", ip, r->port);
+                        snprintf(uri, uri_len, "wss://%s:%u/ws", ip, r->port);
                         mdns_query_results_free(results);
                         return true;
                     }
@@ -72,20 +73,27 @@ void hmi_ws_client_start(hmi_data_model_t *model)
 #endif
 
     wifi_manager_config_t wifi_cfg = {
-        .ssid = CONFIG_HMI_WIFI_SSID,
-        .password = CONFIG_HMI_WIFI_PASSWORD,
         .power_save = false,
+        .service_name_suffix = CONFIG_HMI_PROV_SERVICE_NAME,
+        .pop = CONFIG_HMI_PROV_POP,
     };
-    ESP_ERROR_CHECK(wifi_manager_start_sta(&wifi_cfg));
+    ESP_ERROR_CHECK(wifi_manager_start(&wifi_cfg));
 
     char uri[128];
     if (!discover_service(uri, sizeof(uri))) {
-        snprintf(uri, sizeof(uri), "ws://%s:%u/ws", CONFIG_HMI_SENSOR_HOSTNAME, CONFIG_HMI_SENSOR_PORT);
+        snprintf(uri, sizeof(uri), "wss://%s:%u/ws", CONFIG_HMI_SENSOR_HOSTNAME, CONFIG_HMI_SENSOR_PORT);
     }
     ESP_LOGI(TAG, "Connecting to %s", uri);
+    size_t ca_len = 0;
+    const uint8_t *ca = cert_store_ca_cert(&ca_len);
     ws_client_config_t cfg = {
         .uri = uri,
-        .use_ssl = false,
+        .auth_token = CONFIG_HMI_WS_AUTH_TOKEN,
+        .ca_cert = ca,
+        .ca_cert_len = ca_len,
+        .skip_common_name_check = false,
+        .reconnect_min_delay_ms = 2000,
+        .reconnect_max_delay_ms = 60000,
     };
     esp_err_t start_err = ws_client_start(&cfg, ws_rx, NULL);
     if (start_err != ESP_OK) {

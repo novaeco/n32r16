@@ -13,4 +13,4 @@ idf_component_register(SRCS
     "tasks/t_io.c"
     "tasks/t_heartbeat.c"
     INCLUDE_DIRS "." "io" "drivers" "tasks"
-    REQUIRES common_util common_proto common_net onewire_bus driver)
+    REQUIRES common_util common_proto common_net common_ota cert_store onewire_bus driver)

@@ -1,10 +1,4 @@
 menu "HMI Node Options"
-    config HMI_WIFI_SSID
-        string "Wi-Fi SSID"
-        default "MyNetwork"
-    config HMI_WIFI_PASSWORD
-        string "Wi-Fi Password"
-        default "changeme"
     config HMI_SENSOR_HOSTNAME
         string "Sensor fallback hostname"
         default "sensor-node.local"
@@ -12,6 +6,18 @@ menu "HMI Node Options"
         int "Sensor WebSocket port"
         range 80 65535
         default 8080
+    config HMI_WS_AUTH_TOKEN
+        string "WebSocket bearer token"
+        default "replace-me"
+    config HMI_PROV_SERVICE_NAME
+        string "Provisioning service name suffix"
+        default "HMI"
+    config HMI_PROV_POP
+        string "Provisioning proof-of-possession"
+        default "hmi-pop"
+    config HMI_OTA_URL
+        string "HTTPS OTA manifest URL"
+        default "https://example.com/hmi/ota.json"
     config USE_CBOR
         bool "Enable CBOR payloads"
         default n

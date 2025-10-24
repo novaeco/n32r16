@@ -23,7 +23,7 @@ Firmware for a two-node ESP32-S3 platform delivering real-time sensor acquisitio
 ├── AGENTS.md                – Repository contribution rules
 ├── README.md                – This document
 ├── partitions/              – Shared partition table (32 MB flash, 16 MB PSRAM)
-├── components/              – Shared components (cJSON, LVGL, RGB panel helper)
+├── components/              – Shared components (cJSON, LVGL, RGB panel helper, TLS cert store)
 ├── common/                  – Protocol, networking, and utility components
 ├── sensor_node/             – Firmware project for the acquisition/IO node
 └── hmi_node/                – Firmware project for the HMI/touch node
@@ -62,11 +62,22 @@ idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
 ## Wi-Fi & Networking
-- Default STA credentials are defined in each `sdkconfig.defaults` (`MyNetwork` / `changeme`). Override via `idf.py menuconfig` or environment variables prior to build.
-- Sensor node exposes a WebSocket server on port `8080` and publishes an mDNS record `_hmi-sensor._tcp`.
-- HMI node attempts mDNS discovery first; if unavailable, it falls back to `sensor-node.local:8080` (configurable).
-- Payloads are JSON by default; enable TinyCBOR transport via `CONFIG_USE_CBOR` in each project configuration when desired.
-- All frames include a CRC32 prefix (little-endian) for integrity validation.
+- **Provisioning** – Both firmwares leverage the ESP-IDF provisioning manager in secure SoftAP mode with proof-of-possession. At
+  boot, the node exposes `SENSOR-XXYYZZ` / `HMI-XXYYZZ` (suffix configurable via `CONFIG_SENSOR_PROV_SERVICE_NAME` and
+  `CONFIG_HMI_PROV_SERVICE_NAME`). Provide the POP values from `CONFIG_SENSOR_PROV_POP` / `CONFIG_HMI_PROV_POP` via the companion
+  provisioning tool to inject Wi-Fi credentials, which are stored in the encrypted NVS partition.
+- **Bearer-token authenticated TLS** – The sensor node now serves `wss://` on `CONFIG_SENSOR_WS_PORT` using the PEM materials
+  embedded by `components/cert_store`. Clients must present the bearer token configured in `CONFIG_SENSOR_WS_AUTH_TOKEN`. The HMI
+  node validates the server certificate against the CA bundle supplied by `cert_store` and injects its own bearer token via
+  `CONFIG_HMI_WS_AUTH_TOKEN`.
+- **Service discovery** – mDNS advertising remains on `_hmi-sensor._tcp` but now publishes TXT records describing the secure
+  transport (`proto=wss`, `auth=bearer`). The HMI attempts discovery before falling back to
+  `CONFIG_HMI_SENSOR_HOSTNAME:CONFIG_HMI_SENSOR_PORT`.
+- **Payloads** – JSON remains the default payload format with optional TinyCBOR support toggled via `CONFIG_USE_CBOR`. All frames
+  continue to prepend a CRC32 (little-endian) for integrity checks.
+- **OTA updates** – Both firmwares schedule HTTPS OTA fetches on boot using `CONFIG_SENSOR_OTA_URL` / `CONFIG_HMI_OTA_URL` and the
+  trust anchors bundled in `cert_store`. Bootloader rollback is enabled; ensure production images share matching security
+  configuration.
 
 ## Wiring Summary
 

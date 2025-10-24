@@ -6,8 +6,8 @@
 
 #include <inttypes.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
@@ -18,320 +18,319 @@
 
 static const char *TAG = "proto";
 
-static bool encode_sensor_update_json(const proto_sensor_update_t *msg,
-                                      uint8_t **out_buf, size_t *out_len, uint32_t *crc32)
+static bool json_append(char **cursor, size_t *remaining, const char *fmt, ...)
 {
-    cJSON *root = cJSON_CreateObject();
-    if (!root) {
+    if (!cursor || !remaining || !*remaining) {
         return false;
     }
-
-    cJSON_AddNumberToObject(root, "v", 1);
-    cJSON_AddStringToObject(root, "type", "sensor_update");
-    cJSON_AddNumberToObject(root, "ts", msg->timestamp_ms);
-    cJSON_AddNumberToObject(root, "seq", msg->sequence_id);
-
-    cJSON *sht_arr = cJSON_AddArrayToObject(root, "sht20");
-    for (size_t i = 0; i < msg->sht20_count; ++i) {
-        cJSON *item = cJSON_CreateObject();
-        cJSON_AddStringToObject(item, "id", msg->sht20[i].id);
-        cJSON_AddNumberToObject(item, "t", msg->sht20[i].temperature_c);
-        cJSON_AddNumberToObject(item, "rh", msg->sht20[i].humidity_percent);
-        cJSON_AddItemToArray(sht_arr, item);
-    }
-
-    cJSON *ds_arr = cJSON_AddArrayToObject(root, "ds18b20");
-    for (size_t i = 0; i < msg->ds18b20_count; ++i) {
-        cJSON *item = cJSON_CreateObject();
-        char rom_str[17] = {0};
-        for (size_t b = 0; b < sizeof(msg->ds18b20[i].rom_code); ++b) {
-            snprintf(&rom_str[b * 2], sizeof(rom_str) - (b * 2), "%02X", msg->ds18b20[i].rom_code[b]);
-        }
-        cJSON_AddStringToObject(item, "rom", rom_str);
-        cJSON_AddNumberToObject(item, "t", msg->ds18b20[i].temperature_c);
-        cJSON_AddItemToArray(ds_arr, item);
-    }
-
-    cJSON *gpio = cJSON_AddObjectToObject(root, "gpio");
-    for (size_t i = 0; i < 2; ++i) {
-        char key[6];
-        snprintf(key, sizeof(key), "mcp%zu", i);
-        cJSON *obj = cJSON_AddObjectToObject(gpio, key);
-        cJSON_AddNumberToObject(obj, "A", msg->mcp[i].port_a);
-        cJSON_AddNumberToObject(obj, "B", msg->mcp[i].port_b);
-    }
-
-    cJSON *pwm = cJSON_AddObjectToObject(root, "pwm");
-    cJSON *pca = cJSON_AddObjectToObject(pwm, "pca9685");
-    cJSON_AddNumberToObject(pca, "freq", msg->pwm.frequency_hz);
-    cJSON *duty = cJSON_AddArrayToObject(pca, "duty");
-    for (size_t i = 0; i < 16; ++i) {
-        cJSON_AddItemToArray(duty, cJSON_CreateNumber(msg->pwm.duty_cycle[i]));
-    }
-
-    char *json = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    if (!json) {
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf(*cursor, *remaining, fmt, args);
+    va_end(args);
+    if (written < 0 || (size_t)written >= *remaining) {
         return false;
     }
-
-    size_t len = strlen(json);
-    uint8_t *buf = malloc(len);
-    if (!buf) {
-        cJSON_free(json);
-        return false;
-    }
-    memcpy(buf, json, len);
-    cJSON_free(json);
-
-    *out_buf = buf;
-    *out_len = len;
-    if (crc32) {
-        *crc32 = proto_crc32(buf, len);
-    }
+    *cursor += (size_t)written;
+    *remaining -= (size_t)written;
     return true;
 }
 
-static bool encode_command_json(const proto_command_t *msg, uint8_t **out_buf, size_t *out_len,
-                                uint32_t *crc32)
+static bool encode_sensor_update_json_into(const proto_sensor_update_t *msg, uint8_t *buffer,
+                                      size_t *buffer_len, uint32_t *crc32)
 {
-    cJSON *root = cJSON_CreateObject();
-    if (!root) {
+    if (!msg || !buffer || !buffer_len || *buffer_len == 0) {
         return false;
     }
-    cJSON_AddNumberToObject(root, "v", 1);
-    cJSON_AddStringToObject(root, "type", "cmd");
-    cJSON_AddNumberToObject(root, "ts", msg->timestamp_ms);
-    cJSON_AddNumberToObject(root, "seq", msg->sequence_id);
+    char *cursor = (char *)buffer;
+    size_t remaining = *buffer_len;
+    if (!json_append(&cursor, &remaining,
+                     "{\"v\":1,\"type\":\"sensor_update\",\"ts\":%" PRIu32 ",\"seq\":%" PRIu32 ",\"sht20\":[",
+                     msg->timestamp_ms, msg->sequence_id)) {
+        return false;
+    }
+    for (size_t i = 0; i < msg->sht20_count; ++i) {
+        const proto_sht20_reading_t *entry = &msg->sht20[i];
+        if (!json_append(&cursor, &remaining,
+                         "%s{\"id\":\"%s\",\"t\":%.2f,\"rh\":%.2f}",
+                         i > 0 ? "," : "", entry->id, entry->temperature_c, entry->humidity_percent)) {
+            return false;
+        }
+    }
+    if (!json_append(&cursor, &remaining, "],\"ds18b20\":[")) {
+        return false;
+    }
+    for (size_t i = 0; i < msg->ds18b20_count; ++i) {
+        const proto_ds18b20_reading_t *entry = &msg->ds18b20[i];
+        char rom[17] = {0};
+        for (size_t b = 0; b < sizeof(entry->rom_code); ++b) {
+            snprintf(&rom[b * 2], sizeof(rom) - (b * 2), "%02X", entry->rom_code[b]);
+        }
+        if (!json_append(&cursor, &remaining,
+                         "%s{\"rom\":\"%s\",\"t\":%.2f}",
+                         i > 0 ? "," : "", rom, entry->temperature_c)) {
+            return false;
+        }
+    }
+    if (!json_append(&cursor, &remaining,
+                     "],\"gpio\":{\"mcp0\":{\"A\":%u,\"B\":%u},\"mcp1\":{\"A\":%u,\"B\":%u}},\"pwm\":{\"pca9685\":{\"freq\":%u,\"duty\":[",
+                     msg->mcp[0].port_a, msg->mcp[0].port_b, msg->mcp[1].port_a, msg->mcp[1].port_b,
+                     msg->pwm.frequency_hz)) {
+        return false;
+    }
+    for (size_t i = 0; i < 16; ++i) {
+        if (!json_append(&cursor, &remaining, "%s%u", i > 0 ? "," : "", msg->pwm.duty_cycle[i])) {
+            return false;
+        }
+    }
+    if (!json_append(&cursor, &remaining, "]}}}")) {
+        return false;
+    }
+    size_t used = *buffer_len - remaining;
+    if (crc32) {
+        *crc32 = proto_crc32(buffer, used);
+    }
+    *buffer_len = used;
+    return true;
+}
 
+static bool encode_command_json_into(const proto_command_t *msg, uint8_t *buffer, size_t *buffer_len,
+                                     uint32_t *crc32)
+{
+    if (!msg || !buffer || !buffer_len || *buffer_len == 0) {
+        return false;
+    }
+    char *cursor = (char *)buffer;
+    size_t remaining = *buffer_len;
+    if (!json_append(&cursor, &remaining,
+                     "{\"v\":1,\"type\":\"cmd\",\"ts\":%" PRIu32 ",\"seq\":%" PRIu32,
+                     msg->timestamp_ms, msg->sequence_id)) {
+        return false;
+    }
     if (msg->has_pwm_update) {
-        cJSON *set_pwm = cJSON_AddObjectToObject(root, "set_pwm");
-        cJSON_AddNumberToObject(set_pwm, "ch", msg->pwm_update.channel);
-        cJSON_AddNumberToObject(set_pwm, "duty", msg->pwm_update.duty_cycle);
+        if (!json_append(&cursor, &remaining,
+                         ",\"set_pwm\":{\"ch\":%u,\"duty\":%u}",
+                         msg->pwm_update.channel, msg->pwm_update.duty_cycle)) {
+            return false;
+        }
     }
     if (msg->has_pwm_frequency) {
-        cJSON *freq = cJSON_AddObjectToObject(root, "pwm_freq");
-        cJSON_AddNumberToObject(freq, "freq", msg->pwm_frequency);
+        if (!json_append(&cursor, &remaining,
+                         ",\"pwm_freq\":{\"freq\":%u}", msg->pwm_frequency)) {
+            return false;
+        }
     }
     if (msg->has_gpio_write) {
-        cJSON *write_gpio = cJSON_AddObjectToObject(root, "write_gpio");
-        cJSON_AddStringToObject(write_gpio, "dev", msg->gpio_write.device_index == 0 ? "mcp0" : "mcp1");
-        cJSON_AddStringToObject(write_gpio, "port", msg->gpio_write.port == 0 ? "A" : "B");
-        cJSON_AddNumberToObject(write_gpio, "mask", msg->gpio_write.mask);
-        cJSON_AddNumberToObject(write_gpio, "value", msg->gpio_write.value);
+        const char *dev = msg->gpio_write.device_index == 0 ? "mcp0" : "mcp1";
+        char port = msg->gpio_write.port == 0 ? 'A' : 'B';
+        if (!json_append(&cursor, &remaining,
+                         ",\"write_gpio\":{\"dev\":\"%s\",\"port\":\"%c\",\"mask\":%u,\"value\":%u}",
+                         dev, port, msg->gpio_write.mask, msg->gpio_write.value)) {
+            return false;
+        }
     }
-
-    char *json = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    if (!json) {
+    if (!json_append(&cursor, &remaining, "}")) {
         return false;
     }
-
-    size_t len = strlen(json);
-    uint8_t *buf = malloc(len);
-    if (!buf) {
-        cJSON_free(json);
-        return false;
-    }
-    memcpy(buf, json, len);
-    cJSON_free(json);
-
-    *out_buf = buf;
-    *out_len = len;
+    size_t used = *buffer_len - remaining;
     if (crc32) {
-        *crc32 = proto_crc32(buf, len);
+        *crc32 = proto_crc32(buffer, used);
     }
+    *buffer_len = used;
     return true;
 }
 
 #if CONFIG_USE_CBOR
-static bool encode_sensor_update_cbor(const proto_sensor_update_t *msg, uint8_t **out_buf,
-                                      size_t *out_len, uint32_t *crc32)
+#define CBOR_CHECK(x)                                                                                                   do {                                                                                                                    CborError __err = (x);                                                                                              if (__err != CborNoError) {                                                                                            return false;                                                                                                   }                                                                                                               } while (0)
+
+static bool encode_sensor_update_cbor_into(const proto_sensor_update_t *msg, uint8_t *buffer, size_t *buffer_len,
+                                           uint32_t *crc32)
 {
-    uint8_t *buf = malloc(1024);
-    if (!buf) {
+    if (!msg || !buffer || !buffer_len || *buffer_len == 0) {
         return false;
     }
     CborEncoder encoder;
-    cbor_encoder_init(&encoder, buf, 1024, 0);
+    cbor_encoder_init(&encoder, buffer, *buffer_len, 0);
     CborEncoder map;
-    cbor_encoder_create_map(&encoder, &map, CborIndefiniteLength);
-    cbor_encode_text_stringz(&map, "v");
-    cbor_encode_uint(&map, 1);
-    cbor_encode_text_stringz(&map, "type");
-    cbor_encode_text_stringz(&map, "sensor_update");
-    cbor_encode_text_stringz(&map, "ts");
-    cbor_encode_uint(&map, msg->timestamp_ms);
-    cbor_encode_text_stringz(&map, "seq");
-    cbor_encode_uint(&map, msg->sequence_id);
+    CBOR_CHECK(cbor_encoder_create_map(&encoder, &map, CborIndefiniteLength));
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "v"));
+    CBOR_CHECK(cbor_encode_uint(&map, 1));
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "type"));
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "sensor_update"));
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "ts"));
+    CBOR_CHECK(cbor_encode_uint(&map, msg->timestamp_ms));
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "seq"));
+    CBOR_CHECK(cbor_encode_uint(&map, msg->sequence_id));
 
-    cbor_encode_text_stringz(&map, "sht20");
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "sht20"));
     CborEncoder sht_arr;
-    cbor_encoder_create_array(&map, &sht_arr, msg->sht20_count);
+    CBOR_CHECK(cbor_encoder_create_array(&map, &sht_arr, msg->sht20_count));
     for (size_t i = 0; i < msg->sht20_count; ++i) {
         CborEncoder item;
-        cbor_encoder_create_map(&sht_arr, &item, 3);
-        cbor_encode_text_stringz(&item, "id");
-        cbor_encode_text_stringz(&item, msg->sht20[i].id);
-        cbor_encode_text_stringz(&item, "t");
-        cbor_encode_float(&item, msg->sht20[i].temperature_c);
-        cbor_encode_text_stringz(&item, "rh");
-        cbor_encode_float(&item, msg->sht20[i].humidity_percent);
-        cbor_encoder_close_container(&sht_arr, &item);
+        CBOR_CHECK(cbor_encoder_create_map(&sht_arr, &item, 3));
+        CBOR_CHECK(cbor_encode_text_stringz(&item, "id"));
+        CBOR_CHECK(cbor_encode_text_stringz(&item, msg->sht20[i].id));
+        CBOR_CHECK(cbor_encode_text_stringz(&item, "t"));
+        CBOR_CHECK(cbor_encode_float(&item, msg->sht20[i].temperature_c));
+        CBOR_CHECK(cbor_encode_text_stringz(&item, "rh"));
+        CBOR_CHECK(cbor_encode_float(&item, msg->sht20[i].humidity_percent));
+        CBOR_CHECK(cbor_encoder_close_container(&sht_arr, &item));
     }
-    cbor_encoder_close_container(&map, &sht_arr);
+    CBOR_CHECK(cbor_encoder_close_container(&map, &sht_arr));
 
-    cbor_encode_text_stringz(&map, "ds18b20");
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "ds18b20"));
     CborEncoder ds_arr;
-    cbor_encoder_create_array(&map, &ds_arr, msg->ds18b20_count);
+    CBOR_CHECK(cbor_encoder_create_array(&map, &ds_arr, msg->ds18b20_count));
     for (size_t i = 0; i < msg->ds18b20_count; ++i) {
         CborEncoder item;
-        cbor_encoder_create_map(&ds_arr, &item, 2);
-        cbor_encode_text_stringz(&item, "rom");
+        CBOR_CHECK(cbor_encoder_create_map(&ds_arr, &item, 2));
+        CBOR_CHECK(cbor_encode_text_stringz(&item, "rom"));
         char rom_str[17] = {0};
         for (size_t b = 0; b < sizeof(msg->ds18b20[i].rom_code); ++b) {
             snprintf(&rom_str[b * 2], sizeof(rom_str) - (b * 2), "%02X", msg->ds18b20[i].rom_code[b]);
         }
-        cbor_encode_text_stringz(&item, rom_str);
-        cbor_encode_text_stringz(&item, "t");
-        cbor_encode_float(&item, msg->ds18b20[i].temperature_c);
-        cbor_encoder_close_container(&ds_arr, &item);
+        CBOR_CHECK(cbor_encode_text_stringz(&item, rom_str));
+        CBOR_CHECK(cbor_encode_text_stringz(&item, "t"));
+        CBOR_CHECK(cbor_encode_float(&item, msg->ds18b20[i].temperature_c));
+        CBOR_CHECK(cbor_encoder_close_container(&ds_arr, &item));
     }
-    cbor_encoder_close_container(&map, &ds_arr);
+    CBOR_CHECK(cbor_encoder_close_container(&map, &ds_arr));
 
-    cbor_encode_text_stringz(&map, "gpio");
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "gpio"));
     CborEncoder gpio_map;
-    cbor_encoder_create_map(&map, &gpio_map, 2);
+    CBOR_CHECK(cbor_encoder_create_map(&map, &gpio_map, 2));
     for (size_t i = 0; i < 2; ++i) {
         char key[6];
         snprintf(key, sizeof(key), "mcp%zu", i);
-        cbor_encode_text_stringz(&gpio_map, key);
+        CBOR_CHECK(cbor_encode_text_stringz(&gpio_map, key));
         CborEncoder item;
-        cbor_encoder_create_map(&gpio_map, &item, 2);
-        cbor_encode_text_stringz(&item, "A");
-        cbor_encode_uint(&item, msg->mcp[i].port_a);
-        cbor_encode_text_stringz(&item, "B");
-        cbor_encode_uint(&item, msg->mcp[i].port_b);
-        cbor_encoder_close_container(&gpio_map, &item);
+        CBOR_CHECK(cbor_encoder_create_map(&gpio_map, &item, 2));
+        CBOR_CHECK(cbor_encode_text_stringz(&item, "A"));
+        CBOR_CHECK(cbor_encode_uint(&item, msg->mcp[i].port_a));
+        CBOR_CHECK(cbor_encode_text_stringz(&item, "B"));
+        CBOR_CHECK(cbor_encode_uint(&item, msg->mcp[i].port_b));
+        CBOR_CHECK(cbor_encoder_close_container(&gpio_map, &item));
     }
-    cbor_encoder_close_container(&map, &gpio_map);
+    CBOR_CHECK(cbor_encoder_close_container(&map, &gpio_map));
 
-    cbor_encode_text_stringz(&map, "pwm");
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "pwm"));
     CborEncoder pwm_map;
-    cbor_encoder_create_map(&map, &pwm_map, 1);
-    cbor_encode_text_stringz(&pwm_map, "pca9685");
+    CBOR_CHECK(cbor_encoder_create_map(&map, &pwm_map, 1));
+    CBOR_CHECK(cbor_encode_text_stringz(&pwm_map, "pca9685"));
     CborEncoder pca_map;
-    cbor_encoder_create_map(&pwm_map, &pca_map, 2);
-    cbor_encode_text_stringz(&pca_map, "freq");
-    cbor_encode_uint(&pca_map, msg->pwm.frequency_hz);
-    cbor_encode_text_stringz(&pca_map, "duty");
+    CBOR_CHECK(cbor_encoder_create_map(&pwm_map, &pca_map, 2));
+    CBOR_CHECK(cbor_encode_text_stringz(&pca_map, "freq"));
+    CBOR_CHECK(cbor_encode_uint(&pca_map, msg->pwm.frequency_hz));
+    CBOR_CHECK(cbor_encode_text_stringz(&pca_map, "duty"));
     CborEncoder duty_arr;
-    cbor_encoder_create_array(&pca_map, &duty_arr, 16);
+    CBOR_CHECK(cbor_encoder_create_array(&pca_map, &duty_arr, 16));
     for (size_t i = 0; i < 16; ++i) {
-        cbor_encode_uint(&duty_arr, msg->pwm.duty_cycle[i]);
+        CBOR_CHECK(cbor_encode_uint(&duty_arr, msg->pwm.duty_cycle[i]));
     }
-    cbor_encoder_close_container(&pca_map, &duty_arr);
-    cbor_encoder_close_container(&pwm_map, &pca_map);
-    cbor_encoder_close_container(&map, &pwm_map);
+    CBOR_CHECK(cbor_encoder_close_container(&pca_map, &duty_arr));
+    CBOR_CHECK(cbor_encoder_close_container(&pwm_map, &pca_map));
+    CBOR_CHECK(cbor_encoder_close_container(&map, &pwm_map));
 
-    cbor_encoder_close_container(&encoder, &map);
-    size_t len = cbor_encoder_get_buffer_size(&encoder, buf);
-    if (crc32) {
-        *crc32 = proto_crc32(buf, len);
+    CBOR_CHECK(cbor_encoder_close_container(&encoder, &map));
+    if (cbor_encoder_get_extra_bytes_needed(&encoder) > 0) {
+        return false;
     }
-    *out_buf = buf;
-    *out_len = len;
+    size_t used = cbor_encoder_get_buffer_size(&encoder, buffer);
+    if (crc32) {
+        *crc32 = proto_crc32(buffer, used);
+    }
+    *buffer_len = used;
     return true;
 }
 
-static bool encode_command_cbor(const proto_command_t *msg, uint8_t **out_buf, size_t *out_len,
-                                uint32_t *crc32)
+static bool encode_command_cbor_into(const proto_command_t *msg, uint8_t *buffer, size_t *buffer_len,
+                                     uint32_t *crc32)
 {
-    uint8_t *buf = malloc(512);
-    if (!buf) {
+    if (!msg || !buffer || !buffer_len || *buffer_len == 0) {
         return false;
     }
     CborEncoder encoder;
-    cbor_encoder_init(&encoder, buf, 512, 0);
+    cbor_encoder_init(&encoder, buffer, *buffer_len, 0);
     CborEncoder map;
-    cbor_encoder_create_map(&encoder, &map, CborIndefiniteLength);
-    cbor_encode_text_stringz(&map, "v");
-    cbor_encode_uint(&map, 1);
-    cbor_encode_text_stringz(&map, "type");
-    cbor_encode_text_stringz(&map, "cmd");
-    cbor_encode_text_stringz(&map, "ts");
-    cbor_encode_uint(&map, msg->timestamp_ms);
-    cbor_encode_text_stringz(&map, "seq");
-    cbor_encode_uint(&map, msg->sequence_id);
+    CBOR_CHECK(cbor_encoder_create_map(&encoder, &map, CborIndefiniteLength));
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "v"));
+    CBOR_CHECK(cbor_encode_uint(&map, 1));
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "type"));
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "cmd"));
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "ts"));
+    CBOR_CHECK(cbor_encode_uint(&map, msg->timestamp_ms));
+    CBOR_CHECK(cbor_encode_text_stringz(&map, "seq"));
+    CBOR_CHECK(cbor_encode_uint(&map, msg->sequence_id));
 
     if (msg->has_pwm_update) {
-        cbor_encode_text_stringz(&map, "set_pwm");
+        CBOR_CHECK(cbor_encode_text_stringz(&map, "set_pwm"));
         CborEncoder pwm;
-        cbor_encoder_create_map(&map, &pwm, 2);
-        cbor_encode_text_stringz(&pwm, "ch");
-        cbor_encode_uint(&pwm, msg->pwm_update.channel);
-        cbor_encode_text_stringz(&pwm, "duty");
-        cbor_encode_uint(&pwm, msg->pwm_update.duty_cycle);
-        cbor_encoder_close_container(&map, &pwm);
+        CBOR_CHECK(cbor_encoder_create_map(&map, &pwm, 2));
+        CBOR_CHECK(cbor_encode_text_stringz(&pwm, "ch"));
+        CBOR_CHECK(cbor_encode_uint(&pwm, msg->pwm_update.channel));
+        CBOR_CHECK(cbor_encode_text_stringz(&pwm, "duty"));
+        CBOR_CHECK(cbor_encode_uint(&pwm, msg->pwm_update.duty_cycle));
+        CBOR_CHECK(cbor_encoder_close_container(&map, &pwm));
     }
     if (msg->has_pwm_frequency) {
-        cbor_encode_text_stringz(&map, "pwm_freq");
+        CBOR_CHECK(cbor_encode_text_stringz(&map, "pwm_freq"));
         CborEncoder freq;
-        cbor_encoder_create_map(&map, &freq, 1);
-        cbor_encode_text_stringz(&freq, "freq");
-        cbor_encode_uint(&freq, msg->pwm_frequency);
-        cbor_encoder_close_container(&map, &freq);
+        CBOR_CHECK(cbor_encoder_create_map(&map, &freq, 1));
+        CBOR_CHECK(cbor_encode_text_stringz(&freq, "freq"));
+        CBOR_CHECK(cbor_encode_uint(&freq, msg->pwm_frequency));
+        CBOR_CHECK(cbor_encoder_close_container(&map, &freq));
     }
     if (msg->has_gpio_write) {
-        cbor_encode_text_stringz(&map, "write_gpio");
+        CBOR_CHECK(cbor_encode_text_stringz(&map, "write_gpio"));
         CborEncoder gpio;
-        cbor_encoder_create_map(&map, &gpio, 4);
-        cbor_encode_text_stringz(&gpio, "dev");
-        cbor_encode_text_stringz(&gpio, msg->gpio_write.device_index == 0 ? "mcp0" : "mcp1");
-        cbor_encode_text_stringz(&gpio, "port");
-        cbor_encode_text_stringz(&gpio, msg->gpio_write.port == 0 ? "A" : "B");
-        cbor_encode_text_stringz(&gpio, "mask");
-        cbor_encode_uint(&gpio, msg->gpio_write.mask);
-        cbor_encode_text_stringz(&gpio, "value");
-        cbor_encode_uint(&gpio, msg->gpio_write.value);
-        cbor_encoder_close_container(&map, &gpio);
+        CBOR_CHECK(cbor_encoder_create_map(&map, &gpio, 4));
+        CBOR_CHECK(cbor_encode_text_stringz(&gpio, "dev"));
+        CBOR_CHECK(cbor_encode_text_stringz(&gpio, msg->gpio_write.device_index == 0 ? "mcp0" : "mcp1"));
+        CBOR_CHECK(cbor_encode_text_stringz(&gpio, "port"));
+        CBOR_CHECK(cbor_encode_text_stringz(&gpio, msg->gpio_write.port == 0 ? "A" : "B"));
+        CBOR_CHECK(cbor_encode_text_stringz(&gpio, "mask"));
+        CBOR_CHECK(cbor_encode_uint(&gpio, msg->gpio_write.mask));
+        CBOR_CHECK(cbor_encode_text_stringz(&gpio, "value"));
+        CBOR_CHECK(cbor_encode_uint(&gpio, msg->gpio_write.value));
+        CBOR_CHECK(cbor_encoder_close_container(&map, &gpio));
     }
 
-    cbor_encoder_close_container(&encoder, &map);
-    size_t len = cbor_encoder_get_buffer_size(&encoder, buf);
-    if (crc32) {
-        *crc32 = proto_crc32(buf, len);
+    CBOR_CHECK(cbor_encoder_close_container(&encoder, &map));
+    if (cbor_encoder_get_extra_bytes_needed(&encoder) > 0) {
+        return false;
     }
-    *out_buf = buf;
-    *out_len = len;
+    size_t used = cbor_encoder_get_buffer_size(&encoder, buffer);
+    if (crc32) {
+        *crc32 = proto_crc32(buffer, used);
+    }
+    *buffer_len = used;
     return true;
 }
 #endif
 
-bool proto_encode_sensor_update(const proto_sensor_update_t *msg, bool use_cbor,
-                                uint8_t **out_buf, size_t *out_len, uint32_t *crc32)
+bool proto_encode_sensor_update_into(const proto_sensor_update_t *msg, bool use_cbor, uint8_t *buffer,
+                                     size_t *buffer_len, uint32_t *crc32)
 {
 #if CONFIG_USE_CBOR
     if (use_cbor) {
-        return encode_sensor_update_cbor(msg, out_buf, out_len, crc32);
+        return encode_sensor_update_cbor_into(msg, buffer, buffer_len, crc32);
     }
 #else
     (void)use_cbor;
 #endif
-    return encode_sensor_update_json(msg, out_buf, out_len, crc32);
+    return encode_sensor_update_json_into(msg, buffer, buffer_len, crc32);
 }
 
-bool proto_encode_command(const proto_command_t *msg, bool use_cbor, uint8_t **out_buf,
-                          size_t *out_len, uint32_t *crc32)
+bool proto_encode_command_into(const proto_command_t *msg, bool use_cbor, uint8_t *buffer, size_t *buffer_len,
+                               uint32_t *crc32)
 {
 #if CONFIG_USE_CBOR
     if (use_cbor) {
-        return encode_command_cbor(msg, out_buf, out_len, crc32);
+        return encode_command_cbor_into(msg, buffer, buffer_len, crc32);
     }
 #else
     (void)use_cbor;
 #endif
-    return encode_command_json(msg, out_buf, out_len, crc32);
+    return encode_command_json_into(msg, buffer, buffer_len, crc32);
 }
 
 static bool parse_rom(const char *rom_str, uint8_t out[8])
@@ -486,15 +485,7 @@ bool proto_decode_command(const uint8_t *payload, size_t payload_len, bool is_cb
     (void)is_cbor;
 #endif
 
-    char *json = malloc(payload_len + 1);
-    if (!json) {
-        return false;
-    }
-    memcpy(json, payload, payload_len);
-    json[payload_len] = '\0';
-
-    cJSON *root = cJSON_Parse(json);
-    free(json);
+    cJSON *root = cJSON_ParseWithLengthOpts((const char *)payload, payload_len, NULL, false);
     if (!root) {
         return false;
     }
@@ -740,15 +731,7 @@ bool proto_decode_sensor_update(const uint8_t *payload, size_t payload_len, bool
     (void)is_cbor;
 #endif
 
-    char *json = malloc(payload_len + 1);
-    if (!json) {
-        return false;
-    }
-    memcpy(json, payload, payload_len);
-    json[payload_len] = '\0';
-
-    cJSON *root = cJSON_Parse(json);
-    free(json);
+    cJSON *root = cJSON_ParseWithLengthOpts((const char *)payload, payload_len, NULL, false);
     if (!root) {
         return false;
     }

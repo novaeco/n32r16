@@ -5,17 +5,18 @@
 #include "common/net/ws_server.h"
 #include "common/proto/messages.h"
 #include "common/util/monotonic.h"
+#include "cert_store.h"
 #include "esp_log.h"
 #include "io/io_map.h"
 #include "tasks/t_io.h"
 #include "sdkconfig.h"
-#include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "sensor_ws";
 
 static sensor_data_model_t *s_model;
 static bool s_use_cbor;
+static uint8_t s_tx_frame[SENSOR_DATA_MODEL_MAX_MESSAGE_SIZE + sizeof(uint32_t)];
 
 static void ws_rx(const uint8_t *data, size_t len, uint32_t crc, void *ctx)
 {
@@ -46,13 +47,31 @@ void sensor_ws_server_start(sensor_data_model_t *model)
 #endif
 
     wifi_manager_config_t wifi_cfg = {
-        .ssid = CONFIG_SENSOR_WIFI_SSID,
-        .password = CONFIG_SENSOR_WIFI_PASSWORD,
         .power_save = false,
+        .service_name_suffix = CONFIG_SENSOR_PROV_SERVICE_NAME,
+        .pop = CONFIG_SENSOR_PROV_POP,
     };
-    ESP_ERROR_CHECK(wifi_manager_start_sta(&wifi_cfg));
+    ESP_ERROR_CHECK(wifi_manager_start(&wifi_cfg));
     ESP_ERROR_CHECK(mdns_helper_start("sensor-node", "Sensor Node", CONFIG_SENSOR_WS_PORT));
-    ESP_ERROR_CHECK(ws_server_start(CONFIG_SENSOR_WS_PORT, ws_rx, NULL));
+
+    size_t cert_len = 0;
+    size_t key_len = 0;
+    const uint8_t *cert = cert_store_server_cert(&cert_len);
+    const uint8_t *key = cert_store_server_key(&key_len);
+
+    ws_server_config_t ws_cfg = {
+        .port = CONFIG_SENSOR_WS_PORT,
+        .max_clients = 8,
+        .auth_token = CONFIG_SENSOR_WS_AUTH_TOKEN,
+        .server_cert = cert,
+        .server_cert_len = cert_len,
+        .server_key = key,
+        .server_key_len = key_len,
+        .ping_interval_ms = 10000,
+        .pong_timeout_ms = 5000,
+        .rx_buffer_size = SENSOR_DATA_MODEL_MAX_MESSAGE_SIZE + sizeof(uint32_t),
+    };
+    ESP_ERROR_CHECK(ws_server_start(&ws_cfg, ws_rx, NULL));
 }
 
 void sensor_ws_server_send_update(sensor_data_model_t *model, bool use_cbor)
@@ -64,14 +83,11 @@ void sensor_ws_server_send_update(sensor_data_model_t *model, bool use_cbor)
         return;
     }
     size_t frame_len = payload_len + sizeof(uint32_t);
-    uint8_t *frame = malloc(frame_len);
-    if (!frame) {
-        free(payload);
+    if (frame_len > sizeof(s_tx_frame)) {
+        ESP_LOGE(TAG, "Frame too large (%zu)", frame_len);
         return;
     }
-    memcpy(frame, &crc, sizeof(uint32_t));
-    memcpy(frame + sizeof(uint32_t), payload, payload_len);
-    ws_server_send(frame, frame_len);
-    free(frame);
-    free(payload);
+    memcpy(s_tx_frame, &crc, sizeof(uint32_t));
+    memcpy(s_tx_frame + sizeof(uint32_t), payload, payload_len);
+    ws_server_send(s_tx_frame, frame_len);
 }
