@@ -1,0 +1,30 @@
+# --- ESP-IDF / CMake / build ---
+/build/
+/**/build/
+/CMakeFiles/
+/CMakeCache.txt
+cmake_install.cmake
+*.cmake
+*.ninja
+*.o
+*.obj
+*.a
+*.elf
+*.map
+*.log
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Python / Node ---
+__pycache__/
+*.pyc
+node_modules/
+
+# --- Dossiers de sortie CONSERVÉS en VCS ---
+# Place tes .bin et assets versionnés ici :
+!/dist/
+!/releases/
