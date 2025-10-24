@@ -1,0 +1,9 @@
+#pragma once
+
+#include "driver/gpio.h"
+
+#define SENSOR_NODE_I2C_SCL GPIO_NUM_18
+#define SENSOR_NODE_I2C_SDA GPIO_NUM_17
+#define SENSOR_NODE_ONEWIRE_PIN GPIO_NUM_8
+
+#define SENSOR_NODE_STATUS_LED GPIO_NUM_2

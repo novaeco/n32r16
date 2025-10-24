@@ -1,0 +1,16 @@
+idf_component_register(SRCS
+    "app_main.c"
+    "data_model.c"
+    "i2c_bus.c"
+    "onewire_bus_manager.c"
+    "net/ws_server.c"
+    "io/io_map.c"
+    "drivers/sht20.c"
+    "drivers/pca9685.c"
+    "drivers/mcp23017.c"
+    "drivers/ds18b20.c"
+    "tasks/t_sensors.c"
+    "tasks/t_io.c"
+    "tasks/t_heartbeat.c"
+    INCLUDE_DIRS "." "io" "drivers" "tasks"
+    REQUIRES common_util common_proto common_net onewire_bus driver)
