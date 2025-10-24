@@ -36,9 +36,9 @@ static void ui_task(void *arg) {
         if (s_update_sem != NULL && xSemaphoreTake(s_update_sem, 0) == pdTRUE) {
             hmi_data_snapshot_t snapshot;
             if (hmi_data_model_get_snapshot(&snapshot)) {
-            lvgl_port_lock();
+                lvgl_port_lock();
                 ui_screens_update(&snapshot);
-            lvgl_port_unlock();
+                lvgl_port_unlock();
             }
         }
         lvgl_port_lock();
