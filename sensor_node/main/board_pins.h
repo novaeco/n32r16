@@ -1,7 +1,0 @@
-#pragma once
-
-#define I2C_SCL_GPIO GPIO_NUM_9
-#define I2C_SDA_GPIO GPIO_NUM_8
-#define ONEWIRE_GPIO GPIO_NUM_1
-#define HEARTBEAT_LED_GPIO GPIO_NUM_2
-
