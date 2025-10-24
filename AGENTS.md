@@ -5,7 +5,7 @@ These rules apply to the entire repository.
 
 ## Coding Standards
 - Use ISO C17 for all C source files.
-- Follow the provided `.clang-format` configuration once it is added. Until then, use LLVM style with 4-space indentation.
+- Follow the repository `.clang-format` configuration (LLVM-derived, 4-space indentation).
 - All new C files must compile without warnings under ESP-IDF v5.5 with `-Wall -Wextra`.
 - Do not leave TODO, FIXME, or placeholder comments in committed code.
 

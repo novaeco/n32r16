@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define PROTO_MAX_COMMAND_SIZE 512U
+
 typedef struct {
     char id[16];
     float temperature_c;
