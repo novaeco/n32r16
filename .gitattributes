@@ -1,0 +1,23 @@
+* text=auto eol=lf
+
+# Scripts texte
+*.sh text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binaires (pas de diff ni normalisation)
+*.bin -text binary
+*.png -text binary
+*.jpg -text binary
+*.jpeg -text binary
+*.webp -text binary
+*.bmp -text binary
+*.gif -text binary
+*.ico -text binary
+*.pdf -text binary
+*.zip -text binary
+*.7z -text binary
+*.tar -text binary
+*.gz -text binary
+*.ttf -text binary
+*.otf -text binary
