@@ -13,4 +13,12 @@ idf_component_register(SRCS
     "tasks/t_io.c"
     "tasks/t_heartbeat.c"
     INCLUDE_DIRS "." "io" "drivers" "tasks"
-    REQUIRES common_util common_proto common_net common_ota cert_store onewire_bus driver)
+    REQUIRES common_util common_proto common_net common_ota cert_store onewire_bus driver
+    TEST_SRCS
+    "tests/i2c_mock.c"
+    "tests/onewire_mock.c"
+    "tests/test_sht20.c"
+    "tests/test_ds18b20.c"
+    "tests/test_pca9685.c"
+    "tests/test_mcp23017.c"
+    TEST_INCLUDE_DIRS "tests")

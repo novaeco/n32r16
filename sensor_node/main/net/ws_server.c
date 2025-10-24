@@ -33,7 +33,8 @@ static void ws_rx(const uint8_t *data, size_t len, uint32_t crc, void *ctx)
         io_task_set_pwm_frequency(cmd.pwm_frequency);
     }
     if (cmd.has_gpio_write) {
-        io_task_write_gpio(cmd.gpio_write.device_index, cmd.gpio_write.mask, cmd.gpio_write.value);
+        io_task_write_gpio(cmd.gpio_write.device_index, cmd.gpio_write.port, cmd.gpio_write.mask,
+                           cmd.gpio_write.value);
     }
 }
 
