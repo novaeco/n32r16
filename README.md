@@ -118,6 +118,26 @@ idf.py -p /dev/ttyUSB0 flash monitor
 | DISP_EN        | 6        | Panel enable |
 | RGB Data       | 16-bit bus mapped per `board_waveshare7b_pins.h` |
 | Touch SDA/SCL  | 8 / 9    | GT911 I²C bus |
+
+Detailed wiring matrices, PlantUML sequence diagrams, and hardware adaptation advice are consolidated in
+[`documentations/hardware_wiring.md`](documentations/hardware_wiring.md).
+
+## Release, QA, and Coverage Workflow
+
+- Follow the end-to-end process captured in [`documentations/release_and_testing.md`](documentations/release_and_testing.md)
+  covering git-tagged releases, issue triage, PR checklists, and CI requirements.
+- Enable GCOV instrumentation on the sensor node via `idf.py menuconfig` → *Sensor Node Options* → *Enable gcov
+  instrumentation for unit tests* (config symbol `CONFIG_SENSOR_ENABLE_GCOV`). Rebuild with `idf.py -T`, then execute
+  coverage extraction:
+
+  ```bash
+  python tools/run_coverage.py --build-dir sensor_node/build --xml coverage.xml --html coverage.html
+  ```
+
+- The new Unity suite `tests/test_data_model.c` validates the publication heuristics and encoder buffer rotation to
+  guarantee deterministic telemetry emission.
+- API documentation is generated with Doxygen using `documentations/doxygen/Doxyfile`; the build artefacts are part of the
+  release assets.
 | Touch INT/RST  | 4 / 2    | Reset/interrupt sequencing |
 
 ## Firmware Modules

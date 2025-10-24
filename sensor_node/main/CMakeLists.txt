@@ -21,4 +21,10 @@ idf_component_register(SRCS
     "tests/test_ds18b20.c"
     "tests/test_pca9685.c"
     "tests/test_mcp23017.c"
+    "tests/test_data_model.c"
     TEST_INCLUDE_DIRS "tests")
+
+if(CONFIG_SENSOR_ENABLE_GCOV)
+    target_compile_options(${COMPONENT_LIB} PRIVATE -fprofile-arcs -ftest-coverage)
+    target_link_options(${COMPONENT_LIB} PRIVATE -fprofile-arcs -ftest-coverage)
+endif()
