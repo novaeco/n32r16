@@ -1,0 +1,18 @@
+menu "HMI Node Options"
+    config HMI_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "MyNetwork"
+    config HMI_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "changeme"
+    config HMI_SENSOR_HOSTNAME
+        string "Sensor fallback hostname"
+        default "sensor-node.local"
+    config HMI_SENSOR_PORT
+        int "Sensor WebSocket port"
+        range 80 65535
+        default 8080
+    config USE_CBOR
+        bool "Enable CBOR payloads"
+        default n
+endmenu

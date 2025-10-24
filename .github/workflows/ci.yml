@@ -1,0 +1,30 @@
+name: ESP-IDF Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    container: espressif/idf:release-v5.5
+    strategy:
+      matrix:
+        project: [sensor_node, hmi_node]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 1G
+      - name: Configure IDF
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py set-target esp32s3
+        working-directory: ${{ matrix.project }}
+      - name: Build ${{ matrix.project }}
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py build
+        working-directory: ${{ matrix.project }}

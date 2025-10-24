@@ -1,0 +1,15 @@
+menu "Sensor Node Options"
+    config SENSOR_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "MyNetwork"
+    config SENSOR_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "changeme"
+    config SENSOR_WS_PORT
+        int "WebSocket server port"
+        range 80 65535
+        default 8080
+    config USE_CBOR
+        bool "Enable CBOR payloads"
+        default n
+endmenu
