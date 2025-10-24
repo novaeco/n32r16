@@ -1,6 +1,11 @@
 # Name,   Type, SubType, Offset,  Size, Flags
-# Notes: 32MB flash OPI, 16MB PSRAM mapping
-nvs,      data, nvs,      0x9000,  0x6000,
-phy_init, data, phy,      0xf000,  0x1000,
-factory,  app,  factory,  0x10000, 0x700000,
-storage,  data, spiffs,   ,        0x400000,
+# Notes: 32MB flash OPI, 16MB PSRAM mapping with dual OTA slots and secure storage
+nvs,      data, nvs,      0x9000,  0x7000,
+otadata,  data, ota,      0x10000, 0x2000,
+phy_init, data, phy,      0x12000, 0x1000,
+factory,  app,  factory,  0x20000, 0x200000,
+ota_0,    app,  ota_0,    ,        0x200000,
+ota_1,    app,  ota_1,    ,        0x200000,
+storage,  data, spiffs,   ,        0x300000,
+certstore,data, 0x40,     ,        0x4000, encrypted
+secrets,  data, nvs_keys, ,        0x3000,

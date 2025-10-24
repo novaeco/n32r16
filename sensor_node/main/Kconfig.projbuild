@@ -1,15 +1,49 @@
 menu "Sensor Node Configuration"
 
-config SENSOR_NODE_WIFI_SSID
-    string "Wi-Fi SSID"
-    default "YourSSID"
+config SENSOR_NODE_WS_MAX_FRAME_SIZE
+    int "Maximum WebSocket frame payload (bytes)"
+    default 4096
+    range 1024 16384
     help
-        Station SSID used by the sensor node.
+        Upper bound for serialized sensor update frames broadcast over WebSocket.
+        Should accommodate the largest expected JSON document including future
+        extensions.
 
-config SENSOR_NODE_WIFI_PASS
-    string "Wi-Fi Password"
-    default "YourPassword"
-    help
-        Station password used by the sensor node.
+menu "Wi-Fi Provisioning"
+
+config SENSOR_NODE_PROV_SERVICE_PREFIX
+    string "SoftAP service name prefix"
+    default "SENSOR"
+
+config SENSOR_NODE_PROV_SERVICE_KEY
+    string "SoftAP WPA2 passphrase"
+    default "SensorSetup!"
+
+config SENSOR_NODE_PROV_POP
+    string "Provisioning proof-of-possession"
+    default ""
+
+config SENSOR_NODE_PROV_TIMEOUT_MS
+    int "Provisioning timeout (ms)"
+    default 300000
+    range 60000 1800000
+
+endmenu
+
+menu "Command Authentication"
+
+config SENSOR_NODE_CMD_AUTH_PARTITION
+    string "NVS partition label"
+    default "secrets"
+
+config SENSOR_NODE_CMD_AUTH_NAMESPACE
+    string "NVS namespace"
+    default "command"
+
+config SENSOR_NODE_CMD_AUTH_KEY
+    string "NVS key name"
+    default "hmac_key"
+
+endmenu
 
 endmenu

@@ -1,11 +1,24 @@
 menu "HMI Node Configuration"
 
-config HMI_NODE_WIFI_SSID
-    string "Wi-Fi SSID"
-    default "YourSSID"
+menu "Wi-Fi Provisioning"
 
-config HMI_NODE_WIFI_PASS
-    string "Wi-Fi Password"
-    default "YourPassword"
+config HMI_NODE_PROV_SERVICE_PREFIX
+    string "SoftAP service name prefix"
+    default "HMI"
+
+config HMI_NODE_PROV_SERVICE_KEY
+    string "SoftAP WPA2 passphrase"
+    default "HMISetup!"
+
+config HMI_NODE_PROV_POP
+    string "Provisioning proof-of-possession"
+    default ""
+
+config HMI_NODE_PROV_TIMEOUT_MS
+    int "Provisioning timeout (ms)"
+    default 300000
+    range 60000 1800000
+
+endmenu
 
 endmenu

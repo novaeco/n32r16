@@ -12,6 +12,7 @@
 #include "tasks/t_ui.h"
 #include "time_sync.h"
 #include "wifi_sta.h"
+#include "wifi_provisioner.h"
 
 static const char *TAG = "hmi_main";
 
@@ -33,12 +34,23 @@ void app_main(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
     hmi_data_model_init();
 
+    wifi_sta_credentials_t creds;
+    wifi_provisioner_config_t prov_cfg = {
+        .service_prefix = CONFIG_HMI_NODE_PROV_SERVICE_PREFIX,
+        .service_key = CONFIG_HMI_NODE_PROV_SERVICE_KEY,
+        .proof_of_possession = CONFIG_HMI_NODE_PROV_POP,
+        .timeout_ms = CONFIG_HMI_NODE_PROV_TIMEOUT_MS,
+    };
+
+    hmi_data_model_set_wifi_connected(false);
+    ESP_ERROR_CHECK(wifi_provisioner_acquire(&prov_cfg, &creds));
+    wifi_provisioner_shutdown();
+
     wifi_sta_config_t wifi_cfg = {
-        .ssid = CONFIG_HMI_NODE_WIFI_SSID,
-        .password = CONFIG_HMI_NODE_WIFI_PASS,
+        .ssid = creds.ssid,
+        .password = creds.password,
         .auto_reconnect = true,
     };
-    hmi_data_model_set_wifi_connected(false);
     ESP_ERROR_CHECK(wifi_sta_init(&wifi_cfg));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &hmi_wifi_event_forwarder, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &hmi_wifi_event_forwarder, NULL));

@@ -5,6 +5,7 @@ set(EXTRA_COMPONENT_DIRS
     "${CMAKE_SOURCE_DIR}/../common/util"
     "${CMAKE_SOURCE_DIR}/../common/net"
     "${CMAKE_SOURCE_DIR}/../common/proto"
+    "${CMAKE_SOURCE_DIR}/../common/security"
     "${CMAKE_SOURCE_DIR}/../tests"
 )
 

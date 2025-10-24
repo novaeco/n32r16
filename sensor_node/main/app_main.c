@@ -17,6 +17,8 @@
 #include "time_sync.h"
 #include "wifi_sta.h"
 #include "net/ws_server.h"
+#include "security/command_auth.h"
+#include "wifi_provisioner.h"
 
 static const char *TAG = "sensor_main";
 
@@ -36,13 +38,26 @@ static void wifi_event_forwarder(void *arg, esp_event_base_t event_base, int32_t
 
 void app_main(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(sensor_command_auth_init());
     data_model_init();
 
     ESP_ERROR_CHECK(i2c_bus_init(I2C_NUM_0, I2C_SDA_GPIO, I2C_SCL_GPIO, 400000));
 
+    wifi_sta_credentials_t creds;
+    wifi_provisioner_config_t prov_cfg = {
+        .service_prefix = CONFIG_SENSOR_NODE_PROV_SERVICE_PREFIX,
+        .service_key = CONFIG_SENSOR_NODE_PROV_SERVICE_KEY,
+        .proof_of_possession = CONFIG_SENSOR_NODE_PROV_POP,
+        .timeout_ms = CONFIG_SENSOR_NODE_PROV_TIMEOUT_MS,
+    };
+
+    data_model_set_wifi_state(NETWORK_STATE_PROVISIONING);
+    ESP_ERROR_CHECK(wifi_provisioner_acquire(&prov_cfg, &creds));
+    wifi_provisioner_shutdown();
+
     wifi_sta_config_t wifi_cfg = {
-        .ssid = CONFIG_SENSOR_NODE_WIFI_SSID,
-        .password = CONFIG_SENSOR_NODE_WIFI_PASS,
+        .ssid = creds.ssid,
+        .password = creds.password,
         .auto_reconnect = true,
     };
     data_model_set_wifi_state(NETWORK_STATE_CONNECTING);

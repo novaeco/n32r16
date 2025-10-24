@@ -18,6 +18,7 @@ typedef struct {
     uint64_t timestamp_ms;
     uint32_t crc32;
     cJSON *payload;
+    cJSON *auth;
 } proto_envelope_t;
 
 bool proto_encode_sensor_update(const cJSON *payload, uint64_t timestamp_ms, char **out_str,

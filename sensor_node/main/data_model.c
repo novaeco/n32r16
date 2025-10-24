@@ -1,8 +1,8 @@
 #include "data_model.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdarg.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -11,6 +11,10 @@
 
 #include "proto_crc32.h"
 #include "time_sync.h"
+#include "command_auth.h"
+#include "esp_log.h"
+
+static const char *TAG = "data_model";
 
 static data_model_snapshot_t s_snapshot;
 static SemaphoreHandle_t s_snapshot_mutex;
@@ -266,7 +270,9 @@ bool data_model_parse_command(const uint8_t *buffer, size_t len, io_command_t *c
         return false;
     }
     bool handled = false;
-    if (env.type == PROTO_MSG_COMMAND && env.payload != NULL) {
+    if (!command_auth_validate(&env)) {
+        ESP_LOGW(TAG, "Command authentication failed");
+    } else if (env.type == PROTO_MSG_COMMAND && env.payload != NULL) {
         cJSON *set_pwm = cJSON_GetObjectItemCaseSensitive(env.payload, "set_pwm");
         cJSON *write_gpio = cJSON_GetObjectItemCaseSensitive(env.payload, "write_gpio");
         if (cJSON_IsObject(set_pwm)) {

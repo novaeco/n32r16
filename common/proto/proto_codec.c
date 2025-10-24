@@ -82,6 +82,7 @@ bool proto_decode(const uint8_t *buffer, size_t len, proto_envelope_t *out_msg) 
     cJSON *type = cJSON_GetObjectItemCaseSensitive(root, "type");
     cJSON *ts = cJSON_GetObjectItemCaseSensitive(root, "ts");
     cJSON *payload = cJSON_GetObjectItemCaseSensitive(root, "payload");
+    cJSON *auth = cJSON_GetObjectItemCaseSensitive(root, "auth");
 
     if (!cJSON_IsNumber(version) || !cJSON_IsString(type) || !cJSON_IsNumber(ts) ||
         payload == NULL) {
@@ -94,9 +95,20 @@ bool proto_decode(const uint8_t *buffer, size_t len, proto_envelope_t *out_msg) 
     out_msg->timestamp_ms = (uint64_t)ts->valuedouble;
     out_msg->payload = cJSON_Duplicate(payload, true);
     out_msg->crc32 = proto_crc32_compute(buffer, len);
+    if (auth != NULL) {
+        out_msg->auth = cJSON_Duplicate(auth, true);
+    }
 
     cJSON_Delete(root);
-    return out_msg->payload != NULL;
+    if (out_msg->payload == NULL) {
+        proto_envelope_free(out_msg);
+        return false;
+    }
+    if (auth != NULL && out_msg->auth == NULL) {
+        proto_envelope_free(out_msg);
+        return false;
+    }
+    return true;
 }
 
 void proto_envelope_free(proto_envelope_t *msg) {
@@ -106,6 +118,10 @@ void proto_envelope_free(proto_envelope_t *msg) {
     if (msg->payload != NULL) {
         cJSON_Delete(msg->payload);
         msg->payload = NULL;
+    }
+    if (msg->auth != NULL) {
+        cJSON_Delete(msg->auth);
+        msg->auth = NULL;
     }
 }
 
