@@ -19,6 +19,8 @@ esp_err_t mdns_helper_start(const char *hostname, const char *instance, uint16_t
         mdns_instance_name_set(instance);
     }
     mdns_service_add(NULL, "_hmi-sensor", "_tcp", port, NULL, 0);
+    mdns_service_txt_item_set("_hmi-sensor", "_tcp", "proto", "wss");
+    mdns_service_txt_item_set("_hmi-sensor", "_tcp", "auth", "bearer");
     return ESP_OK;
 }
 

@@ -4,7 +4,11 @@
 #include "esp_log.h"
 #include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static const char *TAG = "ws_client";
 
@@ -12,20 +16,40 @@ static esp_websocket_client_handle_t s_client;
 static ws_client_rx_cb_t s_rx_cb;
 static void *s_rx_ctx;
 static bool s_connected;
+static bool s_should_run;
+static TimerHandle_t s_reconnect_timer;
+static uint32_t s_reconnect_delay_ms;
+static uint32_t s_reconnect_min_ms;
+static uint32_t s_reconnect_max_ms;
+static char *s_auth_header;
 
 static void websocket_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id,
                                     void *event_data)
 {
     (void)handler_args;
+    (void)base;
     esp_websocket_event_data_t *data = (esp_websocket_event_data_t *)event_data;
     switch (event_id) {
     case WEBSOCKET_EVENT_CONNECTED:
         s_connected = true;
+        s_reconnect_delay_ms = s_reconnect_min_ms;
         ESP_LOGI(TAG, "Connected to %s", esp_websocket_client_get_uri(s_client));
         break;
     case WEBSOCKET_EVENT_DISCONNECTED:
         s_connected = false;
-        ESP_LOGW(TAG, "Disconnected");
+        ESP_LOGW(TAG, "WebSocket disconnected");
+        if (s_should_run && s_reconnect_timer) {
+            uint32_t delay = s_reconnect_delay_ms;
+            if (delay > s_reconnect_max_ms) {
+                delay = s_reconnect_max_ms;
+            }
+            xTimerChangePeriod(s_reconnect_timer, pdMS_TO_TICKS(delay), 0);
+            xTimerStart(s_reconnect_timer, 0);
+            if (s_reconnect_delay_ms < s_reconnect_max_ms) {
+                uint64_t next = (uint64_t)s_reconnect_delay_ms * 2U;
+                s_reconnect_delay_ms = (uint32_t)(next > s_reconnect_max_ms ? s_reconnect_max_ms : next);
+            }
+        }
         break;
     case WEBSOCKET_EVENT_DATA:
         if (s_rx_cb && data->payload_len > 0) {
@@ -45,48 +69,108 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
     }
 }
 
+static void reconnect_timer_cb(TimerHandle_t timer)
+{
+    (void)timer;
+    if (s_client && s_should_run) {
+        ESP_LOGI(TAG, "Reconnecting WebSocket");
+        esp_websocket_client_start(s_client);
+    }
+}
+
+static void cleanup_client(void)
+{
+    if (s_reconnect_timer) {
+        xTimerStop(s_reconnect_timer, portMAX_DELAY);
+        xTimerDelete(s_reconnect_timer, portMAX_DELAY);
+        s_reconnect_timer = NULL;
+    }
+    if (s_client) {
+        esp_websocket_client_stop(s_client);
+        esp_websocket_client_destroy(s_client);
+        s_client = NULL;
+    }
+    free(s_auth_header);
+    s_auth_header = NULL;
+    s_rx_cb = NULL;
+    s_rx_ctx = NULL;
+    s_connected = false;
+}
+
 esp_err_t ws_client_start(const ws_client_config_t *config, ws_client_rx_cb_t cb, void *ctx)
 {
     if (!config || !config->uri) {
         return ESP_ERR_INVALID_ARG;
     }
     if (s_client) {
-        return ESP_OK;
+        return ESP_ERR_INVALID_STATE;
     }
 
     esp_websocket_client_config_t ws_cfg = {
         .uri = config->uri,
-        .transport = config->use_ssl ? WEBSOCKET_TRANSPORT_OVER_SSL : WEBSOCKET_TRANSPORT_OVER_TCP,
+        .cert_pem = (const char *)config->ca_cert,
+        .cert_len = config->ca_cert_len,
+        .skip_cert_common_name_check = config->skip_common_name_check,
     };
+
+    if (config->auth_token) {
+        static const char prefix[] = "Authorization: Bearer ";
+        const size_t token_len = strlen(config->auth_token);
+        const size_t header_len = sizeof(prefix) - 1U + token_len + 2U; // CRLF
+        s_auth_header = (char *)malloc(header_len + 1U);
+        if (!s_auth_header) {
+            return ESP_ERR_NO_MEM;
+        }
+        int written = snprintf(s_auth_header, header_len + 1U, "%s%s\r\n", prefix, config->auth_token);
+        if (written < 0 || (size_t)written >= header_len + 1U) {
+            free(s_auth_header);
+            s_auth_header = NULL;
+            return ESP_ERR_INVALID_SIZE;
+        }
+        ws_cfg.headers = s_auth_header;
+    }
 
     s_client = esp_websocket_client_init(&ws_cfg);
     if (!s_client) {
+        free(s_auth_header);
+        s_auth_header = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_reconnect_min_ms = config->reconnect_min_delay_ms ? config->reconnect_min_delay_ms : 2000;
+    s_reconnect_max_ms = config->reconnect_max_delay_ms ? config->reconnect_max_delay_ms : 60000;
+    if (s_reconnect_min_ms > s_reconnect_max_ms) {
+        s_reconnect_max_ms = s_reconnect_min_ms;
+    }
+    s_reconnect_delay_ms = s_reconnect_min_ms;
+
+    s_reconnect_timer = xTimerCreate("ws_retry", pdMS_TO_TICKS(s_reconnect_min_ms), pdFALSE, NULL, reconnect_timer_cb);
+    if (!s_reconnect_timer) {
+        cleanup_client();
         return ESP_ERR_NO_MEM;
     }
 
     s_rx_cb = cb;
     s_rx_ctx = ctx;
+    s_should_run = true;
     s_connected = false;
 
     esp_websocket_register_events(s_client, WEBSOCKET_EVENT_ANY, websocket_event_handler, NULL);
 
     esp_err_t err = esp_websocket_client_start(s_client);
     if (err != ESP_OK) {
-        esp_websocket_client_destroy(s_client);
-        s_client = NULL;
+        ESP_LOGE(TAG, "WebSocket start failed: %s", esp_err_to_name(err));
+        cleanup_client();
         return err;
     }
     return ESP_OK;
 }
 
+
 void ws_client_stop(void)
 {
-    if (s_client) {
-        esp_websocket_client_stop(s_client);
-        esp_websocket_client_destroy(s_client);
-        s_client = NULL;
-        s_connected = false;
-    }
+    s_should_run = false;
+    cleanup_client();
 }
 
 esp_err_t ws_client_send(const uint8_t *data, size_t len)

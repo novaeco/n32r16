@@ -9,4 +9,4 @@ idf_component_register(SRCS
     "tasks/t_heartbeat.c"
     "touch/gt911.c"
     INCLUDE_DIRS "." "display" "net" "tasks" "touch"
-    REQUIRES common_proto common_net common_util lvgl esp_lcd_panel_rgb mdns)
+    REQUIRES common_proto common_net common_util common_ota cert_store lvgl esp_lcd_panel_rgb mdns)

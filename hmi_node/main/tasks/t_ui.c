@@ -13,10 +13,10 @@ static void ui_task(void *arg)
     lvgl_port_init();
     ui_init();
 
+    proto_sensor_update_t update = {0};
     while (true) {
-        const proto_sensor_update_t *update = hmi_data_model_get_update(s_model);
-        if (update) {
-            ui_update_sensor_data(update);
+        if (hmi_data_model_get_update(s_model, &update)) {
+            ui_update_sensor_data(&update);
         }
         ui_update_connection_status(hmi_data_model_is_connected(s_model));
         ui_process();
