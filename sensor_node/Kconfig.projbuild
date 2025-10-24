@@ -18,4 +18,12 @@ menu "Sensor Node Options"
     config USE_CBOR
         bool "Enable CBOR payloads"
         default n
+    config SENSOR_ENABLE_GCOV
+        bool "Enable gcov instrumentation for unit tests"
+        default n
+        help
+            Selecting this option appends "-fprofile-arcs -ftest-coverage" to the
+            compilation and linking flags for the sensor node component. Enable it
+            in CI or dedicated coverage builds before executing `idf.py -T` to
+            generate `.gcda` files consumable by tools/run_coverage.py.
 endmenu

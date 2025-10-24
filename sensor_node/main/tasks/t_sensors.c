@@ -2,6 +2,8 @@
 
 #include "drivers/ds18b20.h"
 #include "drivers/sht20.h"
+#include "esp_err.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "io/io_map.h"
@@ -28,6 +30,7 @@ typedef struct {
     bool sht20_initialized[2];
 } sensors_task_ctx_t;
 
+static const char *TAG = "t_sensors";
 static sensors_task_ctx_t s_ctx;
 
 static float ema_update(float prev, float sample, bool *initialized)
@@ -50,6 +53,8 @@ static void update_sht20_readings(void)
         float hum = 0.0f;
         esp_err_t err = sht20_read_temperature_humidity(map->sht20_addresses[i], &temp, &hum);
         if (err != ESP_OK) {
+            ESP_LOGW(TAG, "SHT20 %zu read failed: %s, using synthetic telemetry", i,
+                     esp_err_to_name(err));
             TickType_t ticks = xTaskGetTickCount();
             float t_demo = 22.5f + 0.75f * sinf((float)ticks / 750.0f + (float)i);
             float h_demo = 55.0f + 4.0f * cosf((float)ticks / 900.0f + (float)i);
@@ -74,8 +79,16 @@ static void ensure_ds18b20_devices(void)
         return;
     }
     size_t count = 0;
-    if (onewire_bus_scan(s_ctx.bus, s_ctx.ds_devices, 4, &count) == ESP_OK && count > 0) {
+    esp_err_t err = onewire_bus_scan(s_ctx.bus, s_ctx.ds_devices, 4, &count);
+    if (err == ESP_OK) {
+        if (count == 0) {
+            ESP_LOGW(TAG, "No DS18B20 sensors discovered on last scan");
+        } else if (count != s_ctx.ds_count) {
+            ESP_LOGI(TAG, "Discovered %u DS18B20 sensors", (unsigned)count);
+        }
         s_ctx.ds_count = count;
+    } else {
+        ESP_LOGE(TAG, "1-Wire scan failed: %s", esp_err_to_name(err));
     }
     s_ctx.next_ds_scan_tick = now + pdMS_TO_TICKS(DS18B20_SCAN_INTERVAL_MS);
 }
@@ -85,11 +98,14 @@ static void kick_ds18b20_conversion(void)
     if (s_ctx.ds_count == 0 || s_ctx.ds_conversion_pending) {
         return;
     }
-    if (ds18b20_start_conversion(s_ctx.bus, s_ctx.ds_devices, s_ctx.ds_count, DS18B20_RESOLUTION_BITS) ==
-        ESP_OK) {
+    esp_err_t err =
+        ds18b20_start_conversion(s_ctx.bus, s_ctx.ds_devices, s_ctx.ds_count, DS18B20_RESOLUTION_BITS);
+    if (err == ESP_OK) {
         uint32_t wait_ms = ds18b20_conversion_time_ms(DS18B20_RESOLUTION_BITS);
         s_ctx.ds_ready_tick = xTaskGetTickCount() + pdMS_TO_TICKS(wait_ms);
         s_ctx.ds_conversion_pending = true;
+    } else {
+        ESP_LOGE(TAG, "Failed to start DS18B20 conversion: %s", esp_err_to_name(err));
     }
 }
 
@@ -116,7 +132,10 @@ static void read_ds18b20_temperatures(void)
     }
     for (size_t i = 0; i < s_ctx.ds_count && i < 4; ++i) {
         float temp = 0.0f;
-        if (ds18b20_read_temperature(s_ctx.bus, &s_ctx.ds_devices[i], &temp) != ESP_OK) {
+        esp_err_t err = ds18b20_read_temperature(s_ctx.bus, &s_ctx.ds_devices[i], &temp);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "DS18B20[%zu] read failed: %s, falling back to synthetic data", i,
+                     esp_err_to_name(err));
             TickType_t ticks = xTaskGetTickCount();
             temp = 21.0f + 0.5f * sinf((float)ticks / 1200.0f + (float)i);
         }
