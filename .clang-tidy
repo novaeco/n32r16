@@ -1,0 +1,13 @@
+Checks: '-*,esp-idf-*'
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*'
+FormatStyle: file
+AnalyzeTemporaryDtors: false
+User: esp
+CheckOptions:
+  - key: readability-function-cognitive-complexity.Threshold
+    value: '20'
+  - key: esp-idf-config-file
+    value: 'sdkconfig'
+ExtraArgs:
+  - '--std=c17'

@@ -34,6 +34,13 @@ Firmware for a two-node ESP32-S3 platform delivering real-time sensor acquisitio
 - CMake/Ninja toolchain automatically provided by ESP-IDF.
 - Targets: `esp32s3` with PSRAM and 32 MB OPI flash.
 
+## Code Quality & Static Analysis
+- **Clang-Format** – Use the repository root `.clang-format` profile: `clang-format -i $(git ls-files '*.c' '*.h')` prior to
+  committing changes.
+- **Clang-Tidy** – After running `idf.py build` (to generate `build/compile_commands.json`), execute
+  `clang-tidy -p build $(git ls-files '*.c')` from the corresponding project directory.
+- **Unit Tests** – Execute `idf.py -T` to run the protocol and driver unit tests when relevant changes are made.
+
 ## Quick Start
 
 ### 1. Configure Toolchain
