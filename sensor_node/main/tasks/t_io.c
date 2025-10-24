@@ -25,6 +25,7 @@ typedef struct {
         uint16_t pwm_freq;
         struct {
             uint8_t device_index;
+            uint8_t port;
             uint16_t mask;
             uint16_t value;
         } gpio;
@@ -62,7 +63,14 @@ static void io_task(void *arg)
                 break;
             case IO_CMD_WRITE_GPIO: {
                 uint8_t idx = cmd.data.gpio.device_index % 2;
-                mcp23017_write_gpio(map->mcp23017_addresses[idx], cmd.data.gpio.mask, cmd.data.gpio.value);
+                uint16_t mask = (uint16_t)(cmd.data.gpio.mask & 0x00FFU);
+                uint16_t value = (uint16_t)(cmd.data.gpio.value & 0x00FFU);
+                uint8_t port = cmd.data.gpio.port ? 1U : 0U;
+                if (port == 1U) {
+                    mask <<= 8;
+                    value <<= 8;
+                }
+                mcp23017_write_gpio(map->mcp23017_addresses[idx], mask, value);
                 break;
             }
             }
@@ -108,12 +116,13 @@ bool io_task_set_pwm_frequency(uint16_t frequency_hz)
     return xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(20)) == pdPASS;
 }
 
-bool io_task_write_gpio(uint8_t device_index, uint16_t mask, uint16_t value)
+bool io_task_write_gpio(uint8_t device_index, uint8_t port, uint16_t mask, uint16_t value)
 {
     io_command_t cmd = {
         .type = IO_CMD_WRITE_GPIO,
         .data.gpio = {
             .device_index = device_index,
+            .port = port,
             .mask = mask,
             .value = value,
         },

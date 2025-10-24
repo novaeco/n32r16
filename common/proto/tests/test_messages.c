@@ -52,6 +52,7 @@ TEST_CASE("proto encode/decode command json", "[proto]")
         .has_gpio_write = true,
         .gpio_write = {
             .device_index = 1,
+            .port = 1,
             .port = 0,
             .mask = 0x03,
             .value = 0x02,
@@ -66,5 +67,6 @@ TEST_CASE("proto encode/decode command json", "[proto]")
     TEST_ASSERT_EQUAL_UINT8(cmd.pwm_update.channel, decoded.pwm_update.channel);
     TEST_ASSERT_EQUAL_UINT16(cmd.pwm_frequency, decoded.pwm_frequency);
     TEST_ASSERT_TRUE(decoded.has_gpio_write);
+    TEST_ASSERT_EQUAL_UINT8(1, decoded.gpio_write.port);
     TEST_ASSERT_EQUAL_UINT16(cmd.gpio_write.value, decoded.gpio_write.value);
 }
