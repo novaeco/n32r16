@@ -53,6 +53,7 @@ TEST_CASE("proto encode/decode command json", "[proto]")
         .gpio_write = {
             .device_index = 1,
             .port = 1,
+            .port = 0,
             .mask = 0x03,
             .value = 0x02,
         },

@@ -47,6 +47,10 @@ Firmware for a two-node ESP32-S3 platform delivering real-time sensor acquisitio
   `clang-tidy -p build $(git ls-files '*.c')` from the corresponding project directory.
 - **Unit Tests** – Execute `idf.py -T` within `sensor_node/` and `common/proto/` to run mocked driver (SHT20, DS18B20, MCP23017,
   PCA9685) and protocol CRC/serialization tests whenever functionality changes.
+  committing changes.
+- **Clang-Tidy** – After running `idf.py build` (to generate `build/compile_commands.json`), execute
+  `clang-tidy -p build $(git ls-files '*.c')` from the corresponding project directory.
+- **Unit Tests** – Execute `idf.py -T` to run the protocol and driver unit tests when relevant changes are made.
 
 ## Quick Start
 
