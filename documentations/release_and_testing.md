@@ -29,7 +29,11 @@ pipeline de tests unitaires/coverage et génération automatique de documentatio
 
 ## 2. Gestion des issues et collaboration
 
-- **Templates** : créer des modèles `ISSUE_TEMPLATE/*.md` et `PULL_REQUEST_TEMPLATE.md` (non inclus ici) couvrant bug, feature, documentation.
+- **Templates** : utiliser les gabarits disponibles dans `.github/ISSUE_TEMPLATE/` et `.github/PULL_REQUEST_TEMPLATE.md`.
+  - `bug.md` exige la description, le contexte matériel/logiciel, les étapes de reproduction, ainsi qu'une checklist de logs et de configuration (`sdkconfig`) pour garantir la traçabilité.
+  - `feature.md` structure la proposition autour du besoin métier, de la solution envisagée, de l'analyse d'impact et des critères d'acceptation (tests, documentation).
+  - `documentation.md` cadre les corrections de guides avec la portée, les sources de vérité et une checklist de conformité rédactionnelle.
+  - La `PULL_REQUEST_TEMPLATE.md` impose la checklist QA minimale (builds sensor/hmi, tests unitaires, couverture, docs) et l'identification des reviewers firmware/QA/docs.
 - **Tri hebdomadaire** :
   - Assigner un label `priority/{P0,P1,P2}` et `area/{sensor,hmi,common}`.
   - Renseigner les étapes de reproduction, logs, version.
