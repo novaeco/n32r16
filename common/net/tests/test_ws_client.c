@@ -2,6 +2,7 @@
 
 #include "unity.h"
 #include <string.h>
+#include "esp_idf_version.h"
 
 typedef struct {
     TimerCallbackFunction_t cb;
@@ -298,4 +299,19 @@ TEST_CASE("ws client send validates connection state", "[net][ws]")
     TEST_ASSERT_TRUE(ws_client_is_connected());
     TEST_ASSERT_EQUAL(ESP_OK, ws_client_send(payload, sizeof(payload)));
     TEST_ASSERT_EQUAL_SIZE_T(sizeof(payload), s_last_send_len);
+}
+
+TEST_CASE("ws client applies TLS server name override", "[net][ws]")
+{
+    ws_client_config_t cfg = {
+        .uri = "wss://sensor",
+        .tls_server_name = "sensor.example.com",
+    };
+    TEST_ASSERT_EQUAL(ESP_OK, ws_client_start(&cfg, NULL, NULL));
+    TEST_ASSERT_NOT_NULL(s_last_config.host);
+    TEST_ASSERT_EQUAL_STRING("sensor.example.com", s_last_config.host);
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
+    TEST_ASSERT_NOT_NULL(s_last_config.common_name);
+    TEST_ASSERT_EQUAL_STRING("sensor.example.com", s_last_config.common_name);
+#endif
 }

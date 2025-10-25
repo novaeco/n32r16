@@ -1,5 +1,6 @@
 #include "ws_client.h"
 
+#include "esp_idf_version.h"
 #include "esp_log.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -303,6 +304,13 @@ esp_err_t ws_client_start(const ws_client_config_t *config, ws_client_rx_cb_t cb
         .cert_len = config->ca_cert_len,
         .skip_cert_common_name_check = config->skip_common_name_check,
     };
+
+    if (config->tls_server_name && config->tls_server_name[0] != '\0') {
+        ws_cfg.host = config->tls_server_name;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
+        ws_cfg.common_name = config->tls_server_name;
+#endif
+    }
 
     if (config->auth_token) {
         static const char prefix[] = "Authorization: Bearer ";

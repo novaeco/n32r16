@@ -99,9 +99,11 @@ idf.py -p /dev/ttyUSB0 flash monitor
   embedded by `components/cert_store`. Clients must present the bearer token configured in `CONFIG_SENSOR_WS_AUTH_TOKEN`. The HMI
   node validates the server certificate against the CA bundle supplied by `cert_store` and injects its own bearer token via
   `CONFIG_HMI_WS_AUTH_TOKEN`.
-- **Service discovery** – mDNS advertising remains on `_hmi-sensor._tcp` but now publishes TXT records describing the secure
-  transport (`proto=wss`, `auth=bearer`). The HMI attempts discovery before falling back to
-  `CONFIG_HMI_SENSOR_HOSTNAME:CONFIG_HMI_SENSOR_PORT`.
+- **Service discovery** – mDNS advertising remains on `_hmi-sensor._tcp` but the HMI now consumes TXT metadata (`proto`,
+  `path`, optional `host`/`sni`) and IPv6 A/AAAA answers to build the WebSocket URI. Successful discoveries persist the URI/SNI
+  pair in encrypted NVS so cold boots reuse the last known good endpoint when the service temporarily disappears. The timeout
+  before the static fallback is tuned via `CONFIG_HMI_DISCOVERY_TIMEOUT_MS`, and production deployments can pin the TLS Server
+  Name Indication with `CONFIG_HMI_WS_TLS_SNI_OVERRIDE`.
 - **Payloads** – JSON remains the default payload format with optional TinyCBOR support toggled via `CONFIG_USE_CBOR`. All frames
   continue to prepend a CRC32 (little-endian) for integrity checks, and the HMI dashboard surfaces CRC status for quick diagnostics.
 - **OTA updates** – Both firmwares schedule HTTPS OTA fetches on boot using `CONFIG_SENSOR_OTA_URL` / `CONFIG_HMI_OTA_URL` and the

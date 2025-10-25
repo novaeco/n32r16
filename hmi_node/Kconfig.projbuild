@@ -15,9 +15,26 @@ menu "HMI Node Options"
         int "Sensor WebSocket port"
         range 80 65535
         default 8080
+    config HMI_DISCOVERY_TIMEOUT_MS
+        int "mDNS discovery timeout before fallback (ms)"
+        range 1000 60000
+        default 12000
+        help
+            Defines the maximum time the HMI node waits for `_hmi-sensor._tcp`
+            responses before falling back to the static hostname configured in
+            `CONFIG_HMI_SENSOR_HOSTNAME`. Set to 0 to disable the timeout and
+            rely solely on discovery retries.
     config HMI_WS_AUTH_TOKEN
         string "WebSocket bearer token"
         default "replace-me"
+    config HMI_WS_TLS_SNI_OVERRIDE
+        string "TLS server name override"
+        default ""
+        help
+            When connecting to the sensor node over TLS the HMI advertises this
+            value as Server Name Indication (SNI) and validates it against the
+            certificate SubjectAltName. Leave empty to use the hostname returned
+            by mDNS, the cached discovery metadata, or `CONFIG_HMI_SENSOR_HOSTNAME`.
     config HMI_PROV_SERVICE_NAME
         string "Provisioning service name suffix"
         default "HMI"
