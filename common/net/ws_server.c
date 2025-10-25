@@ -28,17 +28,149 @@ static StaticSemaphore_t s_client_lock_storage;
 static TimerHandle_t s_ping_timer;
 static uint8_t *s_rx_buffer;
 
+static esp_err_t httpd_ssl_start_default(httpd_handle_t *handle, const httpd_ssl_config_t *config)
+{
+    return httpd_ssl_start(handle, config);
+}
+
+static esp_err_t httpd_stop_default(httpd_handle_t handle)
+{
+    return httpd_stop(handle);
+}
+
+static esp_err_t httpd_register_uri_handler_default(httpd_handle_t handle, const httpd_uri_t *uri)
+{
+    return httpd_register_uri_handler(handle, uri);
+}
+
+static esp_err_t httpd_register_ws_handler_hook_default(httpd_ws_handler_opcode_t hook, httpd_ws_handler_t handler)
+{
+    return httpd_register_ws_handler_hook(hook, handler);
+}
+
+static esp_err_t httpd_ws_send_frame_async_default(httpd_handle_t handle, int fd, httpd_ws_frame_t *frame)
+{
+    return httpd_ws_send_frame_async(handle, fd, frame);
+}
+
+static esp_err_t httpd_ws_recv_frame_default(httpd_req_t *req, httpd_ws_frame_t *frame, size_t max_len)
+{
+    return httpd_ws_recv_frame(req, frame, max_len);
+}
+
+static int httpd_req_to_sockfd_default(httpd_req_t *req)
+{
+    return httpd_req_to_sockfd(req);
+}
+
+static esp_err_t httpd_resp_set_status_default(httpd_req_t *req, const char *status)
+{
+    return httpd_resp_set_status(req, status);
+}
+
+static esp_err_t httpd_resp_set_hdr_default(httpd_req_t *req, const char *field, const char *value)
+{
+    return httpd_resp_set_hdr(req, field, value);
+}
+
+static esp_err_t httpd_resp_send_default(httpd_req_t *req, const char *buf, ssize_t buf_len)
+{
+    return httpd_resp_send(req, buf, buf_len);
+}
+
+static void httpd_sess_trigger_close_default(httpd_handle_t handle, int sockfd)
+{
+    httpd_sess_trigger_close(handle, sockfd);
+}
+
+static SemaphoreHandle_t semaphore_create_default(StaticSemaphore_t *storage)
+{
+    return xSemaphoreCreateMutexStatic(storage);
+}
+
+static BaseType_t semaphore_take_default(SemaphoreHandle_t semaphore, TickType_t ticks)
+{
+    return xSemaphoreTake(semaphore, ticks);
+}
+
+static BaseType_t semaphore_give_default(SemaphoreHandle_t semaphore)
+{
+    return xSemaphoreGive(semaphore);
+}
+
+static void semaphore_delete_default(SemaphoreHandle_t semaphore)
+{
+    vSemaphoreDelete(semaphore);
+}
+
+static TimerHandle_t timer_create_default(const char *name, TickType_t period, UBaseType_t auto_reload,
+                                         void *timer_id, TimerCallbackFunction_t callback)
+{
+    return xTimerCreate(name, period, auto_reload, timer_id, callback);
+}
+
+static BaseType_t timer_start_default(TimerHandle_t timer, TickType_t ticks)
+{
+    return xTimerStart(timer, ticks);
+}
+
+static BaseType_t timer_stop_default(TimerHandle_t timer, TickType_t ticks)
+{
+    return xTimerStop(timer, ticks);
+}
+
+static BaseType_t timer_delete_default(TimerHandle_t timer, TickType_t ticks)
+{
+    return xTimerDelete(timer, ticks);
+}
+
+static BaseType_t timer_change_period_default(TimerHandle_t timer, TickType_t period, TickType_t ticks)
+{
+    return xTimerChangePeriod(timer, period, ticks);
+}
+
+static TickType_t task_get_tick_count_default(void)
+{
+    return xTaskGetTickCount();
+}
+
+static const ws_server_platform_t s_default_platform = {
+    .httpd_ssl_start = httpd_ssl_start_default,
+    .httpd_stop = httpd_stop_default,
+    .httpd_register_uri_handler = httpd_register_uri_handler_default,
+    .httpd_register_ws_handler_hook = httpd_register_ws_handler_hook_default,
+    .httpd_ws_send_frame_async = httpd_ws_send_frame_async_default,
+    .httpd_ws_recv_frame = httpd_ws_recv_frame_default,
+    .httpd_req_to_sockfd = httpd_req_to_sockfd_default,
+    .httpd_resp_set_status = httpd_resp_set_status_default,
+    .httpd_resp_set_hdr = httpd_resp_set_hdr_default,
+    .httpd_resp_send = httpd_resp_send_default,
+    .httpd_sess_trigger_close = httpd_sess_trigger_close_default,
+    .semaphore_create = semaphore_create_default,
+    .semaphore_take = semaphore_take_default,
+    .semaphore_give = semaphore_give_default,
+    .semaphore_delete = semaphore_delete_default,
+    .timer_create = timer_create_default,
+    .timer_start = timer_start_default,
+    .timer_stop = timer_stop_default,
+    .timer_delete = timer_delete_default,
+    .timer_change_period = timer_change_period_default,
+    .task_get_tick_count = task_get_tick_count_default,
+};
+
+static const ws_server_platform_t *s_platform = &s_default_platform;
+
 static void clients_lock(void)
 {
     if (s_client_lock) {
-        xSemaphoreTake(s_client_lock, portMAX_DELAY);
+        s_platform->semaphore_take(s_client_lock, portMAX_DELAY);
     }
 }
 
 static void clients_unlock(void)
 {
     if (s_client_lock) {
-        xSemaphoreGive(s_client_lock);
+        s_platform->semaphore_give(s_client_lock);
     }
 }
 
@@ -125,7 +257,7 @@ static esp_err_t send_ws_frame(int fd, httpd_ws_type_t type, const uint8_t *payl
         .payload = (uint8_t *)payload,
         .len = len,
     };
-    return httpd_ws_send_frame_async(s_server, fd, &frame);
+    return s_platform->httpd_ws_send_frame_async(s_server, fd, &frame);
 }
 
 static void ping_timer_cb(TimerHandle_t timer)
@@ -134,7 +266,7 @@ static void ping_timer_cb(TimerHandle_t timer)
     if (!s_clients) {
         return;
     }
-    const TickType_t now = xTaskGetTickCount();
+    const TickType_t now = s_platform->task_get_tick_count();
     const TickType_t ping_interval = pdMS_TO_TICKS(s_cfg.ping_interval_ms);
     const TickType_t pong_timeout = pdMS_TO_TICKS(s_cfg.pong_timeout_ms);
     clients_lock();
@@ -146,7 +278,7 @@ static void ping_timer_cb(TimerHandle_t timer)
         TickType_t elapsed = now - client->last_seen;
         if (client->awaiting_pong && elapsed >= pong_timeout) {
             ESP_LOGW(TAG, "Client timeout: %d", client->fd);
-            httpd_sess_trigger_close(s_server, client->fd);
+            s_platform->httpd_sess_trigger_close(s_server, client->fd);
             drop_client_locked(client->fd);
             continue;
         }
@@ -155,7 +287,7 @@ static void ping_timer_cb(TimerHandle_t timer)
                 client->awaiting_pong = true;
             } else {
                 ESP_LOGW(TAG, "Ping failed, dropping client %d", client->fd);
-                httpd_sess_trigger_close(s_server, client->fd);
+                s_platform->httpd_sess_trigger_close(s_server, client->fd);
                 drop_client_locked(client->fd);
             }
         }
@@ -167,15 +299,15 @@ static esp_err_t ws_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET) {
         if (!authorize_request(req)) {
-            httpd_resp_set_status(req, "401 Unauthorized");
-            httpd_resp_set_hdr(req, "WWW-Authenticate", "Bearer");
-            httpd_resp_send(req, "Unauthorized", HTTPD_RESP_USE_STRLEN);
+            s_platform->httpd_resp_set_status(req, "401 Unauthorized");
+            s_platform->httpd_resp_set_hdr(req, "WWW-Authenticate", "Bearer");
+            s_platform->httpd_resp_send(req, "Unauthorized", HTTPD_RESP_USE_STRLEN);
             return ESP_FAIL;
         }
-        int fd = httpd_req_to_sockfd(req);
+        int fd = s_platform->httpd_req_to_sockfd(req);
         if (add_client(fd) != ESP_OK) {
-            httpd_resp_set_status(req, "503 Service Unavailable");
-            httpd_resp_send(req, "Too many clients", HTTPD_RESP_USE_STRLEN);
+            s_platform->httpd_resp_set_status(req, "503 Service Unavailable");
+            s_platform->httpd_resp_send(req, "Too many clients", HTTPD_RESP_USE_STRLEN);
             return ESP_FAIL;
         }
         return ESP_OK;
@@ -185,7 +317,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
         .payload = NULL,
         .len = 0,
     };
-    esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
+    esp_err_t ret = s_platform->httpd_ws_recv_frame(req, &frame, 0);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to get frame length: %s", esp_err_to_name(ret));
         return ret;
@@ -195,13 +327,13 @@ static esp_err_t ws_handler(httpd_req_t *req)
         return ESP_ERR_NO_MEM;
     }
     frame.payload = s_rx_buffer;
-    ret = httpd_ws_recv_frame(req, &frame, frame.len);
+    ret = s_platform->httpd_ws_recv_frame(req, &frame, frame.len);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read frame: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    int fd = httpd_req_to_sockfd(req);
+    int fd = s_platform->httpd_req_to_sockfd(req);
     ws_client_t *client = find_client(fd);
     if (!client) {
         ESP_LOGW(TAG, "Frame from unknown client %d", fd);
@@ -295,7 +427,7 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
         return ESP_ERR_NO_MEM;
     }
 
-    s_client_lock = xSemaphoreCreateMutexStatic(&s_client_lock_storage);
+    s_client_lock = s_platform->semaphore_create(&s_client_lock_storage);
     if (!s_client_lock) {
         free(s_rx_buffer);
         s_rx_buffer = NULL;
@@ -304,9 +436,10 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
         return ESP_ERR_NO_MEM;
     }
 
-    s_ping_timer = xTimerCreate("ws_ping", pdMS_TO_TICKS(s_cfg.ping_interval_ms), pdTRUE, NULL, ping_timer_cb);
+    s_ping_timer = s_platform->timer_create("ws_ping", pdMS_TO_TICKS(s_cfg.ping_interval_ms), pdTRUE, NULL,
+                                            ping_timer_cb);
     if (!s_ping_timer) {
-        vSemaphoreDelete(s_client_lock);
+        s_platform->semaphore_delete(s_client_lock);
         s_client_lock = NULL;
         free(s_rx_buffer);
         s_rx_buffer = NULL;
@@ -330,12 +463,12 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
     s_rx_cb = cb;
     s_rx_ctx = ctx;
 
-    esp_err_t ret = httpd_ssl_start(&s_server, &ssl_cfg);
+    esp_err_t ret = s_platform->httpd_ssl_start(&s_server, &ssl_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTPS server: %s", esp_err_to_name(ret));
-        xTimerDelete(s_ping_timer, portMAX_DELAY);
+        s_platform->timer_delete(s_ping_timer, portMAX_DELAY);
         s_ping_timer = NULL;
-        vSemaphoreDelete(s_client_lock);
+        s_platform->semaphore_delete(s_client_lock);
         s_client_lock = NULL;
         free(s_rx_buffer);
         s_rx_buffer = NULL;
@@ -350,19 +483,19 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
         .handler = ws_handler,
         .is_websocket = true,
     };
-    httpd_register_uri_handler(s_server, &ws_uri);
+    s_platform->httpd_register_uri_handler(s_server, &ws_uri);
 
     httpd_uri_t root_uri = {
         .uri = "/",
         .method = HTTP_GET,
         .handler = root_get_handler,
     };
-    httpd_register_uri_handler(s_server, &root_uri);
+    s_platform->httpd_register_uri_handler(s_server, &root_uri);
 
-    httpd_register_ws_handler_hook(HTTPD_WS_CLIENT_CONNECTED, ws_open_hook);
-    httpd_register_ws_handler_hook(HTTPD_WS_CLIENT_DISCONNECTED, ws_close_hook);
+    s_platform->httpd_register_ws_handler_hook(HTTPD_WS_CLIENT_CONNECTED, ws_open_hook);
+    s_platform->httpd_register_ws_handler_hook(HTTPD_WS_CLIENT_DISCONNECTED, ws_close_hook);
 
-    xTimerStart(s_ping_timer, 0);
+    s_platform->timer_start(s_ping_timer, 0);
     ESP_LOGI(TAG, "WebSocket server listening on %u", s_cfg.port);
     return ESP_OK;
 }
@@ -370,16 +503,16 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
 void ws_server_stop(void)
 {
     if (s_ping_timer) {
-        xTimerStop(s_ping_timer, portMAX_DELAY);
-        xTimerDelete(s_ping_timer, portMAX_DELAY);
+        s_platform->timer_stop(s_ping_timer, portMAX_DELAY);
+        s_platform->timer_delete(s_ping_timer, portMAX_DELAY);
         s_ping_timer = NULL;
     }
     if (s_server) {
-        httpd_stop(s_server);
+        s_platform->httpd_stop(s_server);
         s_server = NULL;
     }
     if (s_client_lock) {
-        vSemaphoreDelete(s_client_lock);
+        s_platform->semaphore_delete(s_client_lock);
         s_client_lock = NULL;
     }
     free(s_rx_buffer);
@@ -406,11 +539,49 @@ esp_err_t ws_server_send(const uint8_t *data, size_t len)
         esp_err_t err = send_ws_frame(client->fd, HTTPD_WS_TYPE_BINARY, data, len);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Send failed to %d: %s", client->fd, esp_err_to_name(err));
-            httpd_sess_trigger_close(s_server, client->fd);
+            s_platform->httpd_sess_trigger_close(s_server, client->fd);
             drop_client_locked(client->fd);
             result = err;
         }
     }
     clients_unlock();
     return result;
+}
+
+size_t ws_server_active_client_count(void)
+{
+    size_t count = 0;
+    clients_lock();
+    if (s_clients) {
+        for (size_t i = 0; i < s_client_capacity; ++i) {
+            if (s_clients[i].fd >= 0) {
+                ++count;
+            }
+        }
+    }
+    clients_unlock();
+    return count;
+}
+
+esp_err_t ws_server_add_client_for_test(int fd)
+{
+    return add_client(fd);
+}
+
+void ws_server_clear_clients_for_test(void)
+{
+    clients_lock();
+    if (s_clients) {
+        for (size_t i = 0; i < s_client_capacity; ++i) {
+            s_clients[i].fd = -1;
+            s_clients[i].last_seen = 0;
+            s_clients[i].awaiting_pong = false;
+        }
+    }
+    clients_unlock();
+}
+
+void ws_server_set_platform(const ws_server_platform_t *platform)
+{
+    s_platform = platform ? platform : &s_default_platform;
 }

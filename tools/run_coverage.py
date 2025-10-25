@@ -18,7 +18,11 @@ from typing import List
 
 
 def _default_filters(repo_root: str) -> List[str]:
-    return [os.path.join(repo_root, "sensor_node", "main"), os.path.join(repo_root, "common")]
+    return [
+        os.path.join(repo_root, "sensor_node", "main"),
+        os.path.join(repo_root, "hmi_node", "main"),
+        os.path.join(repo_root, "common"),
+    ]
 
 
 def _build_gcovr_base(args: argparse.Namespace, repo_root: str) -> List[str]:

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sdkconfig.h"
 #include "common/proto/messages.h"
 #include "data_model.h"
 #include <stdbool.h>
@@ -18,3 +19,13 @@ void ui_update_connection_status(bool connected);
 void ui_update_crc_status(bool crc_ok);
 void ui_apply_preferences(const hmi_user_preferences_t *prefs);
 void ui_process(void);
+
+#if CONFIG_BUILD_UNIT_TESTS
+void ui_set_callbacks_for_test(const ui_callbacks_t *callbacks, void *ctx);
+void ui_set_active_prefs_for_test(const hmi_user_preferences_t *prefs);
+void ui_test_handle_gpio_switch(uint8_t device_index, uint8_t pin_index, bool on);
+void ui_test_handle_pwm_slider(uint8_t channel, uint16_t value);
+void ui_test_handle_pwm_frequency(uint16_t freq);
+void ui_test_apply_preferences_inputs(const char *ssid, const char *password, const char *mdns, bool dark,
+                                      bool fahrenheit);
+#endif
