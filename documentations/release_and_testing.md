@@ -90,6 +90,20 @@ pipeline de tests unitaires/coverage et génération automatique de documentatio
 - Modèle de données : `tests/test_data_model.c` (seuils de publication, rotation des buffers).
 - Protocole (`common/proto`) : CRC et sérialisation JSON/CBOR.
 
+### 3.4. Banc d'intégration E2E (pytest + asyncio)
+
+1. Créer/activer un environnement Python ≥ 3.10 :
+   ```bash
+   python -m pip install --upgrade pip
+   pip install -r tests/e2e/requirements.txt
+   ```
+2. Lancer le banc de tests :
+   ```bash
+   pytest tests/e2e
+   ```
+3. Le banc simule les WebSockets `common/net` (provisionnement, CRC, commandes IO) et valide l'échange `sensor_node` ↔ `hmi_node` sans matériel.
+4. Archiver le rapport `pytest` (`.github/workflows/ci.yml`) dans la CI pour tracer les régressions d'intégration protocolaire.
+
 ## 4. Documentation automatisée (Doxygen)
 
 ### 4.1. Générer la documentation
@@ -122,6 +136,7 @@ Les pages HTML sont produites dans `documentations/doxygen/output/html/index.htm
 | Build Sensor | `idf.py set-target esp32s3 && idf.py build` | binaires, map |
 | Build HMI | `idf.py set-target esp32s3 && idf.py build` | binaires |
 | Unit Tests | `idf.py -T` | log Unity |
+| E2E Python | `pytest tests/e2e` | journal pytest |
 | Coverage | `python tools/run_coverage.py --xml coverage.xml` | coverage.xml, coverage.html |
 | Static Analysis | `clang-tidy -p build $(git ls-files '*.c')` | rapport clang-tidy |
 | Docs | `doxygen documentations/doxygen/Doxyfile` | zip documentation |
