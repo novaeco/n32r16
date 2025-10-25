@@ -100,6 +100,69 @@ static const char *format_temperature(char *buf, size_t len, float celsius, bool
     return buf;
 }
 
+static void dispatch_gpio_write(const gpio_switch_ctx_t *ctx, bool on)
+{
+    if (!ctx || !s_callbacks.write_gpio) {
+        return;
+    }
+    uint8_t port = ctx->pin_index < 8 ? 0 : 1;
+    uint8_t bit = ctx->pin_index % 8;
+    uint16_t mask = (uint16_t)(1U << bit);
+    uint16_t value = on ? mask : 0;
+    s_callbacks.write_gpio(ctx->device_index, port, mask, value, s_callback_ctx);
+}
+
+static void dispatch_pwm_value(pwm_slider_ctx_t *ctx, int16_t value)
+{
+    if (!ctx) {
+        return;
+    }
+    if (ctx->value_label) {
+        char text[16];
+        snprintf(text, sizeof(text), "%d", value);
+        lv_label_set_text(ctx->value_label, text);
+    }
+    if (s_callbacks.set_pwm) {
+        s_callbacks.set_pwm(ctx->channel, (uint16_t)value, s_callback_ctx);
+    }
+}
+
+static void dispatch_pwm_frequency(uint16_t freq)
+{
+    if (s_pwm_freq_label) {
+        char text[16];
+        snprintf(text, sizeof(text), "%u Hz", freq);
+        lv_label_set_text(s_pwm_freq_label, text);
+    }
+    if (s_callbacks.set_pwm_frequency) {
+        s_callbacks.set_pwm_frequency(freq, s_callback_ctx);
+    }
+}
+
+static void dispatch_apply_preferences(const char *ssid, const char *password, const char *mdns, bool dark,
+                                       bool fahrenheit)
+{
+    if (!s_callbacks.apply_preferences) {
+        return;
+    }
+    hmi_user_preferences_t prefs = s_active_prefs;
+    if (ssid) {
+        strncpy(prefs.ssid, ssid, sizeof(prefs.ssid) - 1);
+        prefs.ssid[sizeof(prefs.ssid) - 1] = '\0';
+    }
+    if (password) {
+        strncpy(prefs.password, password, sizeof(prefs.password) - 1);
+        prefs.password[sizeof(prefs.password) - 1] = '\0';
+    }
+    if (mdns) {
+        strncpy(prefs.mdns_target, mdns, sizeof(prefs.mdns_target) - 1);
+        prefs.mdns_target[sizeof(prefs.mdns_target) - 1] = '\0';
+    }
+    prefs.dark_theme = dark;
+    prefs.use_fahrenheit = fahrenheit;
+    s_callbacks.apply_preferences(&prefs, s_callback_ctx);
+}
+
 static void gpio_switch_event_cb(lv_event_t *e)
 {
     if (s_updating_ui) {
@@ -109,16 +172,12 @@ static void gpio_switch_event_cb(lv_event_t *e)
         return;
     }
     const gpio_switch_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !s_callbacks.write_gpio) {
+    if (!ctx) {
         return;
     }
     lv_obj_t *target = lv_event_get_target(e);
     bool on = lv_obj_has_state(target, LV_STATE_CHECKED);
-    uint8_t port = ctx->pin_index < 8 ? 0 : 1;
-    uint8_t bit = ctx->pin_index % 8;
-    uint16_t mask = (uint16_t)(1U << bit);
-    uint16_t value = on ? mask : 0;
-    s_callbacks.write_gpio(ctx->device_index, port, mask, value, s_callback_ctx);
+    dispatch_gpio_write(ctx, on);
 }
 
 static void pwm_slider_event_cb(lv_event_t *e)
@@ -136,14 +195,7 @@ static void pwm_slider_event_cb(lv_event_t *e)
     }
     lv_obj_t *slider = lv_event_get_target(e);
     int16_t value = lv_slider_get_value(slider);
-    if (ctx->value_label) {
-        char text[16];
-        snprintf(text, sizeof(text), "%d", value);
-        lv_label_set_text(ctx->value_label, text);
-    }
-    if (s_callbacks.set_pwm) {
-        s_callbacks.set_pwm(ctx->channel, (uint16_t)value, s_callback_ctx);
-    }
+    dispatch_pwm_value(ctx, value);
 }
 
 static void pwm_freq_event_cb(lv_event_t *e)
@@ -159,10 +211,7 @@ static void pwm_freq_event_cb(lv_event_t *e)
     }
     lv_obj_t *slider = lv_event_get_target(e);
     uint16_t freq = (uint16_t)lv_slider_get_value(slider);
-    char text[16];
-    snprintf(text, sizeof(text), "%u Hz", freq);
-    lv_label_set_text(s_pwm_freq_label, text);
-    s_callbacks.set_pwm_frequency(freq, s_callback_ctx);
+    dispatch_pwm_frequency(freq);
 }
 
 static void prefs_apply_event_cb(lv_event_t *e)
@@ -170,22 +219,12 @@ static void prefs_apply_event_cb(lv_event_t *e)
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
         return;
     }
-    if (!s_callbacks.apply_preferences) {
-        return;
-    }
     const char *ssid = lv_textarea_get_text(s_ssid_ta);
     const char *password = lv_textarea_get_text(s_password_ta);
     const char *mdns = lv_textarea_get_text(s_mdns_ta);
-    hmi_user_preferences_t prefs = s_active_prefs;
-    strncpy(prefs.ssid, ssid, sizeof(prefs.ssid) - 1);
-    prefs.ssid[sizeof(prefs.ssid) - 1] = '\0';
-    strncpy(prefs.password, password, sizeof(prefs.password) - 1);
-    prefs.password[sizeof(prefs.password) - 1] = '\0';
-    strncpy(prefs.mdns_target, mdns, sizeof(prefs.mdns_target) - 1);
-    prefs.mdns_target[sizeof(prefs.mdns_target) - 1] = '\0';
-    prefs.dark_theme = lv_obj_has_state(s_theme_switch, LV_STATE_CHECKED);
-    prefs.use_fahrenheit = lv_obj_has_state(s_units_switch, LV_STATE_CHECKED);
-    s_callbacks.apply_preferences(&prefs, s_callback_ctx);
+    bool dark = lv_obj_has_state(s_theme_switch, LV_STATE_CHECKED);
+    bool fahrenheit = lv_obj_has_state(s_units_switch, LV_STATE_CHECKED);
+    dispatch_apply_preferences(ssid, password, mdns, dark, fahrenheit);
 }
 
 static lv_obj_t *create_card(lv_obj_t *parent, const char *title)
@@ -686,3 +725,53 @@ void ui_process(void)
 {
     lvgl_port_flush_ready();
 }
+
+#if CONFIG_BUILD_UNIT_TESTS
+void ui_set_callbacks_for_test(const ui_callbacks_t *callbacks, void *ctx)
+{
+    if (callbacks) {
+        s_callbacks = *callbacks;
+    } else {
+        memset(&s_callbacks, 0, sizeof(s_callbacks));
+    }
+    s_callback_ctx = ctx;
+}
+
+void ui_set_active_prefs_for_test(const hmi_user_preferences_t *prefs)
+{
+    if (prefs) {
+        s_active_prefs = *prefs;
+    } else {
+        memset(&s_active_prefs, 0, sizeof(s_active_prefs));
+    }
+}
+
+void ui_test_handle_gpio_switch(uint8_t device_index, uint8_t pin_index, bool on)
+{
+    gpio_switch_ctx_t ctx = {
+        .device_index = device_index,
+        .pin_index = pin_index,
+    };
+    dispatch_gpio_write(&ctx, on);
+}
+
+void ui_test_handle_pwm_slider(uint8_t channel, uint16_t value)
+{
+    pwm_slider_ctx_t ctx = {
+        .channel = channel,
+        .value_label = NULL,
+    };
+    dispatch_pwm_value(&ctx, (int16_t)value);
+}
+
+void ui_test_handle_pwm_frequency(uint16_t freq)
+{
+    dispatch_pwm_frequency(freq);
+}
+
+void ui_test_apply_preferences_inputs(const char *ssid, const char *password, const char *mdns, bool dark,
+                                      bool fahrenheit)
+{
+    dispatch_apply_preferences(ssid, password, mdns, dark, fahrenheit);
+}
+#endif
