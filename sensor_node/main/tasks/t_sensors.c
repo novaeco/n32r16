@@ -33,6 +33,14 @@ typedef struct {
 static const char *TAG = "t_sensors";
 static sensors_task_ctx_t s_ctx;
 
+/**
+ * @brief Update an exponential moving average sample.
+ *
+ * @param prev Previous filtered value.
+ * @param sample New raw sample to incorporate.
+ * @param initialized Pointer to the EMA initialization flag for the channel.
+ * @return Updated EMA output.
+ */
 static float ema_update(float prev, float sample, bool *initialized)
 {
     if (!initialized) {
@@ -45,6 +53,11 @@ static float ema_update(float prev, float sample, bool *initialized)
     return prev + SHT20_EMA_ALPHA * (sample - prev);
 }
 
+/**
+ * @brief Refresh cached SHT20 measurements and publish them to the data model.
+ *
+ * @return void
+ */
 static void update_sht20_readings(void)
 {
     const io_map_t *map = io_map_get();
@@ -72,6 +85,11 @@ static void update_sht20_readings(void)
     }
 }
 
+/**
+ * @brief Scan the 1-Wire bus to maintain the list of DS18B20 sensors.
+ *
+ * @return void
+ */
 static void ensure_ds18b20_devices(void)
 {
     TickType_t now = xTaskGetTickCount();
@@ -93,6 +111,11 @@ static void ensure_ds18b20_devices(void)
     s_ctx.next_ds_scan_tick = now + pdMS_TO_TICKS(DS18B20_SCAN_INTERVAL_MS);
 }
 
+/**
+ * @brief Start a new conversion on the discovered DS18B20 devices.
+ *
+ * @return void
+ */
 static void kick_ds18b20_conversion(void)
 {
     if (s_ctx.ds_count == 0 || s_ctx.ds_conversion_pending) {
@@ -109,6 +132,11 @@ static void kick_ds18b20_conversion(void)
     }
 }
 
+/**
+ * @brief Check whether the pending DS18B20 conversion finished.
+ *
+ * @return true if the conversion is complete, false otherwise.
+ */
 static bool ds18b20_conversion_complete(void)
 {
     if (!s_ctx.ds_conversion_pending) {
@@ -125,6 +153,11 @@ static bool ds18b20_conversion_complete(void)
     return false;
 }
 
+/**
+ * @brief Read temperatures from DS18B20 sensors and update the data model.
+ *
+ * @return void
+ */
 static void read_ds18b20_temperatures(void)
 {
     if (!ds18b20_conversion_complete()) {
@@ -144,6 +177,12 @@ static void read_ds18b20_temperatures(void)
     s_ctx.ds_conversion_pending = false;
 }
 
+/**
+ * @brief FreeRTOS task body responsible for periodic sensor acquisition.
+ *
+ * @param arg Unused task argument.
+ * @return void
+ */
 static void sensors_task(void *arg)
 {
     (void)arg;
@@ -166,6 +205,13 @@ static void sensors_task(void *arg)
     }
 }
 
+/**
+ * @brief Spawn the sensor acquisition task.
+ *
+ * @param model Pointer to the data model to populate.
+ * @param bus Shared OneWire bus handle for DS18B20 devices.
+ * @return void
+ */
 void sensors_task_start(sensor_data_model_t *model, onewire_bus_handle_t bus)
 {
     s_ctx.model = model;

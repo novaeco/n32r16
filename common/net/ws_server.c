@@ -28,107 +28,255 @@ static StaticSemaphore_t s_client_lock_storage;
 static TimerHandle_t s_ping_timer;
 static uint8_t *s_rx_buffer;
 
+/**
+ * @brief Default hook to start the HTTPS server.
+ *
+ * @param handle Output pointer receiving the server handle.
+ * @param config TLS server configuration.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t httpd_ssl_start_default(httpd_handle_t *handle, const httpd_ssl_config_t *config)
 {
     return httpd_ssl_start(handle, config);
 }
 
+/**
+ * @brief Default hook to stop the HTTPS server.
+ *
+ * @param handle HTTPD server handle.
+ * @return ESP_OK on success or an error code.
+ */
 static esp_err_t httpd_stop_default(httpd_handle_t handle)
 {
     return httpd_stop(handle);
 }
 
+/**
+ * @brief Default hook to register an HTTP URI handler.
+ *
+ * @param handle HTTPD server handle.
+ * @param uri Pointer to the URI descriptor.
+ * @return ESP_OK on success or an error code.
+ */
 static esp_err_t httpd_register_uri_handler_default(httpd_handle_t handle, const httpd_uri_t *uri)
 {
     return httpd_register_uri_handler(handle, uri);
 }
 
+/**
+ * @brief Default hook to register a WebSocket lifecycle callback.
+ *
+ * @param hook Lifecycle event opcode.
+ * @param handler Callback invoked on the event.
+ * @return ESP_OK on success or an error code.
+ */
 static esp_err_t httpd_register_ws_handler_hook_default(httpd_ws_handler_opcode_t hook, httpd_ws_handler_t handler)
 {
     return httpd_register_ws_handler_hook(hook, handler);
 }
 
+/**
+ * @brief Default hook to queue a WebSocket frame for transmission.
+ *
+ * @param handle HTTPD server handle.
+ * @param fd Client socket descriptor.
+ * @param frame Pointer to the frame descriptor.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t httpd_ws_send_frame_async_default(httpd_handle_t handle, int fd, httpd_ws_frame_t *frame)
 {
     return httpd_ws_send_frame_async(handle, fd, frame);
 }
 
+/**
+ * @brief Default hook to receive a WebSocket frame.
+ *
+ * @param req HTTP request context.
+ * @param frame Frame descriptor to populate.
+ * @param max_len Maximum payload length to read.
+ * @return ESP_OK on success or an error code.
+ */
 static esp_err_t httpd_ws_recv_frame_default(httpd_req_t *req, httpd_ws_frame_t *frame, size_t max_len)
 {
     return httpd_ws_recv_frame(req, frame, max_len);
 }
 
+/**
+ * @brief Default hook to obtain the socket descriptor from a request.
+ *
+ * @param req HTTP request context.
+ * @return Socket descriptor associated with the request.
+ */
 static int httpd_req_to_sockfd_default(httpd_req_t *req)
 {
     return httpd_req_to_sockfd(req);
 }
 
+/**
+ * @brief Default hook to set the HTTP response status line.
+ *
+ * @param req HTTP request context.
+ * @param status Status string (e.g., "200 OK").
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t httpd_resp_set_status_default(httpd_req_t *req, const char *status)
 {
     return httpd_resp_set_status(req, status);
 }
 
+/**
+ * @brief Default hook to append a header to the HTTP response.
+ *
+ * @param req HTTP request context.
+ * @param field Header field name.
+ * @param value Header value string.
+ * @return ESP_OK on success or an error code.
+ */
 static esp_err_t httpd_resp_set_hdr_default(httpd_req_t *req, const char *field, const char *value)
 {
     return httpd_resp_set_hdr(req, field, value);
 }
 
+/**
+ * @brief Default hook to send an HTTP response body.
+ *
+ * @param req HTTP request context.
+ * @param buf Pointer to the response buffer.
+ * @param buf_len Length of the response buffer or HTTPD_RESP_USE_STRLEN.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t httpd_resp_send_default(httpd_req_t *req, const char *buf, ssize_t buf_len)
 {
     return httpd_resp_send(req, buf, buf_len);
 }
 
+/**
+ * @brief Default hook to close an HTTPD session socket.
+ *
+ * @param handle HTTPD server handle.
+ * @param sockfd Client socket descriptor.
+ * @return void
+ */
 static void httpd_sess_trigger_close_default(httpd_handle_t handle, int sockfd)
 {
     httpd_sess_trigger_close(handle, sockfd);
 }
 
+/**
+ * @brief Default hook to create a mutex semaphore using static storage.
+ *
+ * @param storage Pointer to the static semaphore storage buffer.
+ * @return Handle to the created semaphore.
+ */
 static SemaphoreHandle_t semaphore_create_default(StaticSemaphore_t *storage)
 {
     return xSemaphoreCreateMutexStatic(storage);
 }
 
+/**
+ * @brief Default hook to acquire a semaphore.
+ *
+ * @param semaphore Semaphore handle.
+ * @param ticks Maximum wait time in ticks.
+ * @return pdTRUE on success or pdFALSE on timeout.
+ */
 static BaseType_t semaphore_take_default(SemaphoreHandle_t semaphore, TickType_t ticks)
 {
     return xSemaphoreTake(semaphore, ticks);
 }
 
+/**
+ * @brief Default hook to release a semaphore.
+ *
+ * @param semaphore Semaphore handle.
+ * @return pdTRUE on success or pdFALSE on failure.
+ */
 static BaseType_t semaphore_give_default(SemaphoreHandle_t semaphore)
 {
     return xSemaphoreGive(semaphore);
 }
 
+/**
+ * @brief Default hook to delete a semaphore.
+ *
+ * @param semaphore Semaphore handle.
+ * @return void
+ */
 static void semaphore_delete_default(SemaphoreHandle_t semaphore)
 {
     vSemaphoreDelete(semaphore);
 }
 
+/**
+ * @brief Default hook to create a FreeRTOS timer.
+ *
+ * @param name Timer name string.
+ * @param period Timer period in ticks.
+ * @param auto_reload Auto-reload flag.
+ * @param timer_id User context pointer.
+ * @param callback Function invoked on expiration.
+ * @return Handle to the created timer or NULL on failure.
+ */
 static TimerHandle_t timer_create_default(const char *name, TickType_t period, UBaseType_t auto_reload,
                                          void *timer_id, TimerCallbackFunction_t callback)
 {
     return xTimerCreate(name, period, auto_reload, timer_id, callback);
 }
 
+/**
+ * @brief Default hook to start a FreeRTOS timer.
+ *
+ * @param timer Timer handle.
+ * @param ticks Maximum wait time in ticks.
+ * @return pdPASS on success or pdFAIL on failure.
+ */
 static BaseType_t timer_start_default(TimerHandle_t timer, TickType_t ticks)
 {
     return xTimerStart(timer, ticks);
 }
 
+/**
+ * @brief Default hook to stop a FreeRTOS timer.
+ *
+ * @param timer Timer handle.
+ * @param ticks Maximum wait time in ticks.
+ * @return pdPASS on success or pdFAIL on failure.
+ */
 static BaseType_t timer_stop_default(TimerHandle_t timer, TickType_t ticks)
 {
     return xTimerStop(timer, ticks);
 }
 
+/**
+ * @brief Default hook to delete a FreeRTOS timer.
+ *
+ * @param timer Timer handle.
+ * @param ticks Maximum wait time in ticks.
+ * @return pdPASS on success or pdFAIL on failure.
+ */
 static BaseType_t timer_delete_default(TimerHandle_t timer, TickType_t ticks)
 {
     return xTimerDelete(timer, ticks);
 }
 
+/**
+ * @brief Default hook to update a FreeRTOS timer period.
+ *
+ * @param timer Timer handle.
+ * @param period New period in ticks.
+ * @param ticks Maximum wait time in ticks.
+ * @return pdPASS on success or pdFAIL on failure.
+ */
 static BaseType_t timer_change_period_default(TimerHandle_t timer, TickType_t period, TickType_t ticks)
 {
     return xTimerChangePeriod(timer, period, ticks);
 }
 
+/**
+ * @brief Default hook to read the current RTOS tick count.
+ *
+ * @return Current tick count.
+ */
 static TickType_t task_get_tick_count_default(void)
 {
     return xTaskGetTickCount();
@@ -160,6 +308,11 @@ static const ws_server_platform_t s_default_platform = {
 
 static const ws_server_platform_t *s_platform = &s_default_platform;
 
+/**
+ * @brief Acquire the client table lock if available.
+ *
+ * @return void
+ */
 static void clients_lock(void)
 {
     if (s_client_lock) {
@@ -167,6 +320,11 @@ static void clients_lock(void)
     }
 }
 
+/**
+ * @brief Release the client table lock if held.
+ *
+ * @return void
+ */
 static void clients_unlock(void)
 {
     if (s_client_lock) {
@@ -174,6 +332,12 @@ static void clients_unlock(void)
     }
 }
 
+/**
+ * @brief Find a client entry by socket descriptor.
+ *
+ * @param fd Client socket descriptor.
+ * @return Pointer to the client entry or NULL when not found.
+ */
 static ws_client_t *find_client(int fd)
 {
     if (!s_clients) {
@@ -187,6 +351,12 @@ static ws_client_t *find_client(int fd)
     return NULL;
 }
 
+/**
+ * @brief Remove a client from the active table (lock must be held).
+ *
+ * @param fd Client socket descriptor to remove.
+ * @return void
+ */
 static void drop_client_locked(int fd)
 {
     if (!s_clients) {
@@ -203,6 +373,12 @@ static void drop_client_locked(int fd)
     }
 }
 
+/**
+ * @brief Remove a client from the active table with internal locking.
+ *
+ * @param fd Client socket descriptor to remove.
+ * @return void
+ */
 static void drop_client(int fd)
 {
     clients_lock();
@@ -210,6 +386,12 @@ static void drop_client(int fd)
     clients_unlock();
 }
 
+/**
+ * @brief Add a client socket to the active table.
+ *
+ * @param fd Client socket descriptor to register.
+ * @return ESP_OK on success or ESP_FAIL when capacity is exhausted.
+ */
 static esp_err_t add_client(int fd)
 {
     esp_err_t err = ESP_FAIL;
@@ -232,6 +414,12 @@ static esp_err_t add_client(int fd)
     return err;
 }
 
+/**
+ * @brief Validate the Authorization header against the configured token.
+ *
+ * @param req HTTP request context.
+ * @return true when the request is authorized, false otherwise.
+ */
 static bool authorize_request(httpd_req_t *req)
 {
     if (!s_cfg.auth_token || strlen(s_cfg.auth_token) == 0) {
@@ -250,6 +438,15 @@ static bool authorize_request(httpd_req_t *req)
     return strcmp(header + prefix_len, s_cfg.auth_token) == 0;
 }
 
+/**
+ * @brief Send a WebSocket frame to a client using the platform abstraction.
+ *
+ * @param fd Client socket descriptor.
+ * @param type WebSocket frame type.
+ * @param payload Pointer to the payload buffer.
+ * @param len Payload length in bytes.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t send_ws_frame(int fd, httpd_ws_type_t type, const uint8_t *payload, size_t len)
 {
     httpd_ws_frame_t frame = {
@@ -260,6 +457,12 @@ static esp_err_t send_ws_frame(int fd, httpd_ws_type_t type, const uint8_t *payl
     return s_platform->httpd_ws_send_frame_async(s_server, fd, &frame);
 }
 
+/**
+ * @brief Periodic timer that dispatches ping frames and handles timeouts.
+ *
+ * @param timer Timer handle invoking the callback.
+ * @return void
+ */
 static void ping_timer_cb(TimerHandle_t timer)
 {
     (void)timer;
@@ -295,6 +498,12 @@ static void ping_timer_cb(TimerHandle_t timer)
     clients_unlock();
 }
 
+/**
+ * @brief Primary WebSocket endpoint handler for HTTPD.
+ *
+ * @param req HTTP request context.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t ws_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET) {
@@ -365,6 +574,12 @@ static esp_err_t ws_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/**
+ * @brief Serve the HTTP root endpoint with a simple banner.
+ *
+ * @param req HTTP request context.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
     const char resp[] = "ESP32 Secure WebSocket Server";
@@ -372,6 +587,13 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/**
+ * @brief WebSocket hook called when a client completes the handshake.
+ *
+ * @param hd HTTPD server handle (unused).
+ * @param fd Client socket descriptor.
+ * @return ESP_OK after acknowledging the connection.
+ */
 static esp_err_t ws_open_hook(httpd_handle_t hd, int fd)
 {
     (void)hd;
@@ -379,6 +601,13 @@ static esp_err_t ws_open_hook(httpd_handle_t hd, int fd)
     return ESP_OK;
 }
 
+/**
+ * @brief WebSocket hook invoked when a client disconnects.
+ *
+ * @param hd HTTPD server handle (unused).
+ * @param fd Client socket descriptor.
+ * @return void
+ */
 static void ws_close_hook(httpd_handle_t hd, int fd)
 {
     (void)hd;
@@ -386,6 +615,14 @@ static void ws_close_hook(httpd_handle_t hd, int fd)
     drop_client(fd);
 }
 
+/**
+ * @brief Start the secure WebSocket server with the provided configuration.
+ *
+ * @param config Pointer to the server configuration structure.
+ * @param cb Receive callback for inbound application frames.
+ * @param ctx User context passed to the receive callback.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb, void *ctx)
 {
     if (!config || !config->server_cert || !config->server_key || config->server_cert_len == 0 ||
@@ -500,6 +737,11 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
     return ESP_OK;
 }
 
+/**
+ * @brief Stop the WebSocket server and free allocated resources.
+ *
+ * @return void
+ */
 void ws_server_stop(void)
 {
     if (s_ping_timer) {
@@ -524,6 +766,13 @@ void ws_server_stop(void)
     s_rx_ctx = NULL;
 }
 
+/**
+ * @brief Broadcast a binary payload to all connected WebSocket clients.
+ *
+ * @param data Pointer to the payload buffer.
+ * @param len Payload length in bytes.
+ * @return ESP_OK when all frames are queued, otherwise the last error seen.
+ */
 esp_err_t ws_server_send(const uint8_t *data, size_t len)
 {
     if (!s_server || !data || len == 0) {
@@ -548,6 +797,11 @@ esp_err_t ws_server_send(const uint8_t *data, size_t len)
     return result;
 }
 
+/**
+ * @brief Return the number of currently connected WebSocket clients.
+ *
+ * @return Active client count.
+ */
 size_t ws_server_active_client_count(void)
 {
     size_t count = 0;
@@ -563,11 +817,22 @@ size_t ws_server_active_client_count(void)
     return count;
 }
 
+/**
+ * @brief Inject a fake client entry for unit testing.
+ *
+ * @param fd Socket descriptor representing the client.
+ * @return ESP_OK on success or an error code when capacity is exceeded.
+ */
 esp_err_t ws_server_add_client_for_test(int fd)
 {
     return add_client(fd);
 }
 
+/**
+ * @brief Remove all clients from the table for test teardown.
+ *
+ * @return void
+ */
 void ws_server_clear_clients_for_test(void)
 {
     clients_lock();
@@ -581,6 +846,12 @@ void ws_server_clear_clients_for_test(void)
     clients_unlock();
 }
 
+/**
+ * @brief Override the WebSocket server platform hooks.
+ *
+ * @param platform Pointer to the platform definition (NULL for defaults).
+ * @return void
+ */
 void ws_server_set_platform(const ws_server_platform_t *platform)
 {
     s_platform = platform ? platform : &s_default_platform;

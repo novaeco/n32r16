@@ -14,6 +14,13 @@
 
 static const char *TAG = "ds18b20";
 
+/**
+ * @brief Select a DS18B20 device on the shared 1-Wire bus.
+ *
+ * @param bus OneWire bus handle.
+ * @param device Optional device descriptor (NULL to address all devices).
+ * @return ESP_OK on success or an error code from the OneWire driver.
+ */
 static esp_err_t ds18b20_select_device(onewire_bus_handle_t bus, const onewire_device_t *device)
 {
     ESP_RETURN_ON_ERROR(onewire_bus_reset(bus), TAG, "reset");
@@ -26,6 +33,12 @@ static esp_err_t ds18b20_select_device(onewire_bus_handle_t bus, const onewire_d
     return onewire_bus_write_bytes(bus, device->rom_code, sizeof(device->rom_code));
 }
 
+/**
+ * @brief Compute the DS18B20 conversion latency for a given resolution.
+ *
+ * @param resolution_bits Desired resolution (9-12 bits).
+ * @return Conversion time in milliseconds.
+ */
 uint32_t ds18b20_conversion_time_ms(uint8_t resolution_bits)
 {
     switch (resolution_bits) {
@@ -41,6 +54,15 @@ uint32_t ds18b20_conversion_time_ms(uint8_t resolution_bits)
     }
 }
 
+/**
+ * @brief Configure DS18B20 scratchpad and start a temperature conversion.
+ *
+ * @param bus OneWire bus handle.
+ * @param devices Array of device descriptors to address.
+ * @param count Number of devices in the array.
+ * @param resolution_bits Requested conversion resolution.
+ * @return ESP_OK on success, otherwise an error from the transport.
+ */
 esp_err_t ds18b20_start_conversion(onewire_bus_handle_t bus, const onewire_device_t *devices,
                                    size_t count, uint8_t resolution_bits)
 {
@@ -77,6 +99,13 @@ esp_err_t ds18b20_start_conversion(onewire_bus_handle_t bus, const onewire_devic
     return onewire_bus_write_bytes(bus, &cmd, 1);
 }
 
+/**
+ * @brief Poll the conversion status bit of the DS18B20 bus.
+ *
+ * @param bus OneWire bus handle.
+ * @param ready Output flag receiving the conversion result.
+ * @return ESP_OK on success or an error from the OneWire driver.
+ */
 esp_err_t ds18b20_check_conversion(onewire_bus_handle_t bus, bool *ready)
 {
     if (!bus || !ready) {
@@ -90,6 +119,14 @@ esp_err_t ds18b20_check_conversion(onewire_bus_handle_t bus, bool *ready)
     return err;
 }
 
+/**
+ * @brief Read and convert the DS18B20 scratchpad contents to degrees Celsius.
+ *
+ * @param bus OneWire bus handle.
+ * @param device Target device descriptor.
+ * @param temperature_c Output pointer storing the measured temperature.
+ * @return ESP_OK on success, otherwise an ESP-IDF error code.
+ */
 esp_err_t ds18b20_read_temperature(onewire_bus_handle_t bus, const onewire_device_t *device,
                                    float *temperature_c)
 {

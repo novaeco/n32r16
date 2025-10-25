@@ -14,12 +14,28 @@
 #define MCP23017_OLATA 0x14
 #define MCP23017_OLATB 0x15
 
+/**
+ * @brief Write a 16-bit value to consecutive MCP23017 registers.
+ *
+ * @param addr I2C slave address.
+ * @param reg Starting register address.
+ * @param value Word value to write (low byte first).
+ * @return ESP_OK when the transfer succeeds, otherwise an error code.
+ */
 static esp_err_t mcp23017_write16(uint8_t addr, uint8_t reg, uint16_t value)
 {
     uint8_t data[3] = {reg, (uint8_t)(value & 0xFF), (uint8_t)(value >> 8)};
     return i2c_bus_write(addr, data, sizeof(data));
 }
 
+/**
+ * @brief Read a 16-bit value from the MCP23017 register pair.
+ *
+ * @param addr I2C slave address.
+ * @param reg Starting register address.
+ * @param value Output pointer receiving the register contents.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t mcp23017_read16(uint8_t addr, uint8_t reg, uint16_t *value)
 {
     uint8_t reg_addr = reg;
@@ -29,6 +45,14 @@ static esp_err_t mcp23017_read16(uint8_t addr, uint8_t reg, uint16_t *value)
     return ESP_OK;
 }
 
+/**
+ * @brief Initialize MCP23017 direction and pull-up configuration.
+ *
+ * @param addr I2C slave address.
+ * @param direction_mask Bit mask selecting input (1) or output (0) pins.
+ * @param pullup_mask Pull-up enable mask for input pins.
+ * @return ESP_OK on success, otherwise an error code.
+ */
 esp_err_t mcp23017_init(uint8_t addr, uint16_t direction_mask, uint16_t pullup_mask)
 {
     ESP_RETURN_ON_ERROR(mcp23017_write16(addr, MCP23017_IODIRA, direction_mask), "mcp23017", "iodir");
@@ -37,6 +61,13 @@ esp_err_t mcp23017_init(uint8_t addr, uint16_t direction_mask, uint16_t pullup_m
     return ESP_OK;
 }
 
+/**
+ * @brief Read GPIO input states from both MCP23017 ports.
+ *
+ * @param addr I2C slave address.
+ * @param value Output pointer receiving the concatenated port value.
+ * @return ESP_OK when the read succeeds, otherwise an error code.
+ */
 esp_err_t mcp23017_read_gpio(uint8_t addr, uint16_t *value)
 {
     if (!value) {
@@ -45,6 +76,14 @@ esp_err_t mcp23017_read_gpio(uint8_t addr, uint16_t *value)
     return mcp23017_read16(addr, MCP23017_GPIOA, value);
 }
 
+/**
+ * @brief Update GPIO output latches on the MCP23017 using a mask.
+ *
+ * @param addr I2C slave address.
+ * @param mask Bit mask indicating which pins to update.
+ * @param value Output value applied to masked pins.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 esp_err_t mcp23017_write_gpio(uint8_t addr, uint16_t mask, uint16_t value)
 {
     uint16_t current;

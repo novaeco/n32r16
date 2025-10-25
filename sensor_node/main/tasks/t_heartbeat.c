@@ -6,6 +6,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+/**
+ * @brief Blink the status LED to indicate the firmware heartbeat.
+ *
+ * @param arg Unused task argument.
+ * @return void
+ */
 static void heartbeat_task(void *arg)
 {
     (void)arg;
@@ -25,6 +31,11 @@ static void heartbeat_task(void *arg)
     }
 }
 
+/**
+ * @brief Create the heartbeat task pinned to the application core.
+ *
+ * @return void
+ */
 void heartbeat_task_start(void)
 {
     xTaskCreatePinnedToCore(heartbeat_task, "t_heartbeat", 2048, NULL, 1, NULL, 0);
