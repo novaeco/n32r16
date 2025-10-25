@@ -39,6 +39,10 @@ esp_err_t memory_profile_init(void)
         multi_heap_info_t info = {0};
         heap_caps_get_info(&info, MALLOC_CAP_SPIRAM);
         s_profile.psram_free_bytes = info.total_free_bytes;
+    } else {
+        s_profile.psram_size_bytes = 0;
+        s_profile.psram_free_bytes = 0;
+    }
     }
 #else
     s_profile.psram_available = esp_psram_is_initialized();

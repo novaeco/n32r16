@@ -28,6 +28,7 @@ void ui_test_handle_gpio_switch(uint8_t device_index, uint8_t pin_index, bool on
 void ui_test_handle_pwm_slider(uint8_t channel, uint16_t value);
 void ui_test_handle_pwm_frequency(uint16_t freq);
 void ui_test_apply_preferences_inputs(const char *ssid, const char *password, const char *mdns, bool dark,
-                                      bool fahrenheit);
+                                      bool fahrenheit, bool high_contrast, bool large_touch_targets,
+                                      uint8_t text_scale_percent, hmi_language_t language);
 void ui_test_trigger_reset_preferences(void);
 #endif

@@ -4,6 +4,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <stdbool.h>
+#include <stdint.h>
+
+typedef enum {
+    HMI_LANGUAGE_EN = 0,
+    HMI_LANGUAGE_FR = 1,
+    HMI_LANGUAGE_MAX
+} hmi_language_t;
 
 typedef struct {
     char ssid[33];
@@ -11,6 +18,10 @@ typedef struct {
     char mdns_target[64];
     bool dark_theme;
     bool use_fahrenheit;
+    bool high_contrast;
+    bool large_touch_targets;
+    uint8_t text_scale_percent;
+    hmi_language_t language;
 } hmi_user_preferences_t;
 
 typedef struct {

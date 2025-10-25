@@ -7,15 +7,17 @@ pipeline de tests unitaires/coverage et génération automatique de documentatio
 ## 1. Politique de versionnement et releases
 
 1. Créer une branche stabilisée (`release/x.y.z`) à partir de `main` lorsque l'ensemble des tests est vert.
-2. Mettre à jour la version logique dans `common/proto/messages.h` (champ `PROTO_VERSION`) si le format change.
+2. Mettre à jour la version logique dans `common/proto/messages.h` (champ `PROTO_VERSION`) si le format change et incrémenter le
+   numéro semver dans le fichier racine `VERSION` ainsi que la section dédiée de `CHANGELOG.md`.
 3. Générer un changelog signé via [`git-cliff`](https://github.com/orhun/git-cliff) :
    ```bash
-   git cliff --config tools/git-cliff.toml --tag v1.0.0 > CHANGELOG.md
+   git cliff --config tools/git-cliff.toml --tag v1.2.0 > CHANGELOG.md
    ```
-4. Taguer la release :
+4. Créer le tag signé via l'assistant :
    ```bash
-   git tag -a v1.0.0 -m "Sensor/HMI v1.0.0"
-   git push origin v1.0.0
+   python tools/release/tag_version.py --dry-run
+   python tools/release/tag_version.py
+   git push origin --tags
    ```
 5. Publier le binaire signé depuis chaque projet :
    ```bash
@@ -102,9 +104,14 @@ pipeline de tests unitaires/coverage et génération automatique de documentatio
    pytest tests/e2e
    ```
 3. Le banc simule les WebSockets `common/net` (provisionnement, CRC, commandes IO) et valide l'échange `sensor_node` ↔ `hmi_node` sans matériel.
-4. Ajoutez l'étape `pytest tests/e2e/test_ws_handshake_vectors.py` à vos pipelines pour fixer les vecteurs HMAC/AES utilisés par
-   `common/net/ws_security`.
+4. Ajoutez les étapes `pytest tests/e2e/test_ws_handshake_vectors.py` **et** `pytest tests/e2e/test_ws_performance.py` à vos
+   pipelines pour fixer les vecteurs HMAC/AES et les tests de montée en charge Python.
 5. Archiver le rapport `pytest` (`.github/workflows/ci.yml`) dans la CI pour tracer les régressions d'intégration protocolaire.
+6. Pour les validations mobiles manuelles, lancer la passerelle dédiée :
+   ```bash
+   python -m tests.e2e.mock_gateway --host 0.0.0.0 --port 8443 --token demo-token --insecure
+   ```
+   puis connecter les clients iOS/Android en suivant `documentations/compatibility/mobile_validation.md`.
 
 ## 4. Documentation automatisée (Doxygen)
 

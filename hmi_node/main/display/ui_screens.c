@@ -1,6 +1,7 @@
 #include "display/ui_screens.h"
 
 #include "display/lvgl_port.h"
+#include "display/ui_locale.h"
 #include "lvgl.h"
 #include <math.h>
 #include <stdio.h>
@@ -26,6 +27,7 @@ static void *s_callback_ctx;
 static bool s_updating_ui;
 static hmi_user_preferences_t s_active_prefs;
 
+static lv_obj_t *s_tabview;
 static lv_obj_t *s_status_label;
 static lv_obj_t *s_crc_badge;
 static lv_obj_t *s_wifi_badge;
@@ -34,6 +36,7 @@ static lv_obj_t *s_gpio_tab;
 static lv_obj_t *s_pwm_tab;
 static lv_obj_t *s_traces_tab;
 static lv_obj_t *s_settings_tab;
+static lv_obj_t *s_accessibility_tab;
 
 static lv_obj_t *s_sht20_name[2];
 static lv_obj_t *s_sht20_temp[2];
@@ -63,14 +66,53 @@ static lv_obj_t *s_password_ta;
 static lv_obj_t *s_mdns_ta;
 static lv_obj_t *s_theme_switch;
 static lv_obj_t *s_units_switch;
+static lv_obj_t *s_language_dd;
+static lv_obj_t *s_high_contrast_switch;
+static lv_obj_t *s_text_scale_slider;
+static lv_obj_t *s_text_scale_label;
+static lv_obj_t *s_touch_targets_switch;
+static lv_obj_t *s_ssid_label;
+static lv_obj_t *s_password_label;
+static lv_obj_t *s_mdns_label;
+static lv_obj_t *s_dark_theme_label;
+static lv_obj_t *s_use_fahrenheit_label;
+static lv_obj_t *s_apply_label;
+static lv_obj_t *s_reset_label;
+static lv_obj_t *s_language_label;
+static lv_obj_t *s_high_contrast_label;
+static lv_obj_t *s_text_scale_title;
+static lv_obj_t *s_touch_targets_label;
+static lv_obj_t *s_apply_btn;
+static lv_obj_t *s_reset_btn;
+static proto_sensor_update_t s_last_proto_update;
+static bool s_has_last_proto_update;
+static bool s_last_connected;
+static bool s_last_crc_ok;
+static uint32_t s_last_sequence_id;
+
+static void refresh_localised_text(void);
+static void apply_touch_target_style(void);
+static void update_text_scale_label(void);
+static const ui_locale_pack_t *get_locale(void);
 
 static void apply_theme(bool dark)
 {
     lvgl_port_lock();
     lv_disp_t *disp = lv_disp_get_default();
-    lv_theme_t *theme = lv_theme_default_init(disp, lv_palette_main(LV_PALETTE_BLUE),
-                                              lv_palette_darken(LV_PALETTE_GREY, 2), dark, LV_FONT_DEFAULT);
+    lv_color_t primary = s_active_prefs.high_contrast ? lv_color_hex(0x000000) : lv_palette_main(LV_PALETTE_BLUE);
+    lv_color_t secondary = s_active_prefs.high_contrast ? lv_color_hex(0xFFD54F) : lv_palette_darken(LV_PALETTE_GREY, 2);
+    lv_theme_t *theme = lv_theme_default_init(disp, primary, secondary, dark, LV_FONT_DEFAULT);
     lv_disp_set_theme(disp, theme);
+    apply_display_zoom();
+    lv_obj_t *scr = lv_scr_act();
+    if (scr) {
+        if (s_active_prefs.high_contrast) {
+            lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);
+        } else {
+            lv_obj_set_style_bg_color(scr, lv_color_hex(dark ? 0x101418 : 0xF5F7FA), 0);
+        }
+        lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    }
     lvgl_port_unlock();
 }
 
@@ -104,6 +146,126 @@ static const char *format_temperature(char *buf, size_t len, float celsius, bool
     }
     snprintf(buf, len, "%.2f %s", value, unit);
     return buf;
+}
+
+static void anim_translate_exec(void *var, int32_t v)
+{
+    if (!var) {
+        return;
+    }
+    lv_obj_set_style_translate_y((lv_obj_t *)var, (lv_coord_t)v, LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+
+static void anim_fade_exec(void *var, int32_t v)
+{
+    if (!var) {
+        return;
+    }
+    lv_obj_set_style_opa((lv_obj_t *)var, (lv_opa_t)v, LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+
+static void animate_entrance(lv_obj_t *obj, uint32_t delay_ms)
+{
+    if (!obj) {
+        return;
+    }
+    lv_obj_set_style_translate_y(obj, 48, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_opa(obj, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    lv_anim_t slide;
+    lv_anim_init(&slide);
+    lv_anim_set_var(&slide, obj);
+    lv_anim_set_values(&slide, 48, 0);
+    lv_anim_set_time(&slide, 320);
+    lv_anim_set_delay(&slide, delay_ms);
+    lv_anim_set_path_cb(&slide, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&slide, anim_translate_exec);
+    lv_anim_start(&slide);
+
+    lv_anim_t fade;
+    lv_anim_init(&fade);
+    lv_anim_set_var(&fade, obj);
+    lv_anim_set_values(&fade, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_time(&fade, 260);
+    lv_anim_set_delay(&fade, delay_ms + 60);
+    lv_anim_set_exec_cb(&fade, anim_fade_exec);
+    lv_anim_start(&fade);
+}
+
+static const ui_locale_pack_t *get_locale(void)
+{
+    hmi_language_t lang = s_active_prefs.language;
+    if (lang >= HMI_LANGUAGE_MAX) {
+        lang = HMI_LANGUAGE_EN;
+    }
+    return ui_locale_get_pack(lang);
+}
+
+static void apply_display_zoom(void)
+{
+    lv_disp_t *disp = lv_disp_get_default();
+    if (!disp) {
+        return;
+    }
+    uint32_t percent = s_active_prefs.text_scale_percent ? s_active_prefs.text_scale_percent : 100U;
+    if (percent < 80U) {
+        percent = 80U;
+    }
+    if (percent > 140U) {
+        percent = 140U;
+    }
+    uint16_t zoom = (uint16_t)((percent * 256U) / 100U);
+    lv_disp_set_zoom(disp, zoom);
+}
+
+static void update_text_scale_label(void)
+{
+    if (!s_text_scale_label || !s_text_scale_slider) {
+        return;
+    }
+    char buf[16];
+    uint16_t value = (uint16_t)lv_slider_get_value(s_text_scale_slider);
+    lv_snprintf(buf, sizeof(buf), "%u%%", (unsigned)value);
+    lv_label_set_text(s_text_scale_label, buf);
+}
+
+static void apply_touch_target_style(void)
+{
+    lv_coord_t pad = s_active_prefs.large_touch_targets ? 12 : 4;
+    lv_coord_t btn_height = s_active_prefs.large_touch_targets ? 60 : 48;
+    lv_coord_t btn_width = s_active_prefs.large_touch_targets ? 170 : 140;
+
+    for (size_t dev = 0; dev < GPIO_DEVICE_COUNT; ++dev) {
+        for (size_t pin = 0; pin < GPIO_PINS_PER_DEVICE; ++pin) {
+            lv_obj_t *sw = s_gpio_switch[dev][pin];
+            if (sw) {
+                lv_obj_set_style_pad_all(sw, pad, LV_PART_MAIN | LV_STATE_DEFAULT);
+            }
+        }
+    }
+
+    if (s_theme_switch) {
+        lv_obj_set_style_pad_all(s_theme_switch, pad, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+    if (s_units_switch) {
+        lv_obj_set_style_pad_all(s_units_switch, pad, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+    if (s_high_contrast_switch) {
+        lv_obj_set_style_pad_all(s_high_contrast_switch, pad, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+    if (s_touch_targets_switch) {
+        lv_obj_set_style_pad_all(s_touch_targets_switch, pad, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+    if (s_apply_btn) {
+        lv_obj_set_size(s_apply_btn, btn_width, btn_height);
+    }
+    if (s_reset_btn) {
+        lv_obj_set_size(s_reset_btn, btn_width, btn_height);
+    }
+    if (s_text_scale_slider) {
+        lv_obj_set_style_pad_all(s_text_scale_slider, pad, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_pad_all(s_text_scale_slider, pad, LV_PART_KNOB | LV_STATE_DEFAULT);
+    }
 }
 
 static void dispatch_gpio_write(const gpio_switch_ctx_t *ctx, bool on)
@@ -146,7 +308,8 @@ static void dispatch_pwm_frequency(uint16_t freq)
 }
 
 static void dispatch_apply_preferences(const char *ssid, const char *password, const char *mdns, bool dark,
-                                       bool fahrenheit)
+                                       bool fahrenheit, bool high_contrast, bool large_touch_targets,
+                                       uint8_t text_scale_percent, hmi_language_t language)
 {
     if (!s_callbacks.apply_preferences) {
         return;
@@ -166,6 +329,13 @@ static void dispatch_apply_preferences(const char *ssid, const char *password, c
     }
     prefs.dark_theme = dark;
     prefs.use_fahrenheit = fahrenheit;
+    prefs.high_contrast = high_contrast;
+    prefs.large_touch_targets = large_touch_targets;
+    if (text_scale_percent < 80U || text_scale_percent > 140U) {
+        text_scale_percent = 100U;
+    }
+    prefs.text_scale_percent = text_scale_percent;
+    prefs.language = (language < HMI_LANGUAGE_MAX) ? language : HMI_LANGUAGE_EN;
     s_callbacks.apply_preferences(&prefs, s_callback_ctx);
 }
 
@@ -228,6 +398,14 @@ static void pwm_freq_event_cb(lv_event_t *e)
     dispatch_pwm_frequency(freq);
 }
 
+static void text_scale_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) {
+        return;
+    }
+    update_text_scale_label();
+}
+
 static void prefs_apply_event_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
@@ -238,7 +416,13 @@ static void prefs_apply_event_cb(lv_event_t *e)
     const char *mdns = lv_textarea_get_text(s_mdns_ta);
     bool dark = lv_obj_has_state(s_theme_switch, LV_STATE_CHECKED);
     bool fahrenheit = lv_obj_has_state(s_units_switch, LV_STATE_CHECKED);
-    dispatch_apply_preferences(ssid, password, mdns, dark, fahrenheit);
+    bool high_contrast = s_high_contrast_switch && lv_obj_has_state(s_high_contrast_switch, LV_STATE_CHECKED);
+    bool touch_targets = s_touch_targets_switch && lv_obj_has_state(s_touch_targets_switch, LV_STATE_CHECKED);
+    uint8_t text_scale = s_text_scale_slider ? (uint8_t)lv_slider_get_value(s_text_scale_slider)
+                                             : (s_active_prefs.text_scale_percent ? s_active_prefs.text_scale_percent : 100U);
+    uint16_t selected = s_language_dd ? lv_dropdown_get_selected(s_language_dd) : (uint16_t)s_active_prefs.language;
+    hmi_language_t language = (selected < HMI_LANGUAGE_MAX) ? (hmi_language_t)selected : HMI_LANGUAGE_EN;
+    dispatch_apply_preferences(ssid, password, mdns, dark, fahrenheit, high_contrast, touch_targets, text_scale, language);
 }
 
 static void prefs_reset_event_cb(lv_event_t *e)
@@ -267,6 +451,7 @@ static lv_obj_t *create_card(lv_obj_t *parent, const char *title)
 
 static void create_dashboard_tab(lv_obj_t *tab)
 {
+    const ui_locale_pack_t *locale = get_locale();
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(tab, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_all(tab, 16, 0);
@@ -282,16 +467,17 @@ static void create_dashboard_tab(lv_obj_t *tab)
     lv_obj_set_style_pad_gap(status_row, 16, 0);
 
     s_status_label = lv_label_create(status_row);
-    lv_label_set_text(s_status_label, "Wi-Fi: Disconnected");
+    lv_label_set_text(s_status_label, locale->label_wifi_disconnected);
     lv_obj_set_style_text_color(s_status_label, lv_color_hex(0xFF5555), 0);
 
     s_wifi_badge = lv_label_create(status_row);
-    lv_label_set_text(s_wifi_badge, "RSSI: -- dBm");
+    lv_label_set_text_fmt(s_wifi_badge, "%s: --", locale->label_sequence_prefix);
     lv_obj_set_style_text_color(s_wifi_badge, lv_color_hex(0xAAAAAA), 0);
 
     s_crc_badge = lv_label_create(status_row);
-    lv_label_set_text(s_crc_badge, "CRC: n/a");
+    lv_label_set_text(s_crc_badge, locale->label_crc_unknown);
     lv_obj_set_style_text_color(s_crc_badge, lv_color_hex(0xAAAAAA), 0);
+    animate_entrance(status_row, 0);
 
     lv_obj_t *sht_row = lv_obj_create(tab);
     lv_obj_set_size(sht_row, LV_PCT(100), LV_SIZE_CONTENT);
@@ -304,11 +490,12 @@ static void create_dashboard_tab(lv_obj_t *tab)
     for (size_t i = 0; i < 2; ++i) {
         lv_obj_t *card = create_card(sht_row, "SHT20");
         s_sht20_name[i] = lv_label_create(card);
-        lv_label_set_text_fmt(s_sht20_name[i], "Sensor %u", (unsigned)(i + 1));
+        lv_label_set_text_fmt(s_sht20_name[i], "%s %u", locale->label_sensor_fallback, (unsigned)(i + 1));
         s_sht20_temp[i] = lv_label_create(card);
-        lv_label_set_text(s_sht20_temp[i], "Temp: --");
+        lv_label_set_text_fmt(s_sht20_temp[i], "%s: --", locale->label_temperature_prefix);
         s_sht20_hum[i] = lv_label_create(card);
-        lv_label_set_text(s_sht20_hum[i], "RH: --");
+        lv_label_set_text_fmt(s_sht20_hum[i], "%s: --", locale->label_humidity_prefix);
+        animate_entrance(card, (uint32_t)(i * 60));
     }
 
     lv_obj_t *ds_row = lv_obj_create(tab);
@@ -324,12 +511,14 @@ static void create_dashboard_tab(lv_obj_t *tab)
         s_ds18_name[i] = lv_label_create(card);
         lv_label_set_text_fmt(s_ds18_name[i], "ROM %u", (unsigned)(i + 1));
         s_ds18_temp[i] = lv_label_create(card);
-        lv_label_set_text(s_ds18_temp[i], "Temp: --");
+        lv_label_set_text_fmt(s_ds18_temp[i], "%s: --", locale->label_temperature_prefix);
+        animate_entrance(card, (uint32_t)(i * 50 + 120));
     }
 }
 
 static void create_gpio_tab(lv_obj_t *tab)
 {
+    const ui_locale_pack_t *locale = get_locale();
     lv_obj_set_style_pad_all(tab, 16, 0);
     lv_obj_set_style_pad_gap(tab, 24, 0);
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_ROW_WRAP);
@@ -343,6 +532,8 @@ static void create_gpio_tab(lv_obj_t *tab)
         lv_obj_t *title = lv_label_create(panel);
         lv_label_set_text_fmt(title, "MCP23017_%u", (unsigned)dev);
         lv_obj_set_width(title, LV_PCT(100));
+
+        animate_entrance(panel, (uint32_t)(dev * 80));
 
         for (uint8_t pin = 0; pin < GPIO_PINS_PER_DEVICE; ++pin) {
             lv_obj_t *cell = lv_obj_create(panel);
@@ -363,7 +554,7 @@ static void create_gpio_tab(lv_obj_t *tab)
             s_gpio_switch[dev][pin] = sw;
 
             lv_obj_t *state = lv_label_create(cell);
-            lv_label_set_text(state, "OFF");
+            lv_label_set_text(state, locale->label_gpio_off);
             s_gpio_state_label[dev][pin] = state;
         }
     }
@@ -371,6 +562,7 @@ static void create_gpio_tab(lv_obj_t *tab)
 
 static void create_pwm_tab(lv_obj_t *tab)
 {
+    const ui_locale_pack_t *locale = get_locale();
     lv_obj_set_style_pad_all(tab, 16, 0);
     lv_obj_set_style_pad_gap(tab, 16, 0);
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
@@ -384,7 +576,7 @@ static void create_pwm_tab(lv_obj_t *tab)
     lv_obj_set_style_pad_gap(freq_row, 12, 0);
 
     lv_obj_t *freq_label = lv_label_create(freq_row);
-    lv_label_set_text(freq_label, "Frequency");
+    lv_label_set_text(freq_label, locale->label_frequency);
 
     s_pwm_freq_slider = lv_slider_create(freq_row);
     lv_slider_set_range(s_pwm_freq_slider, 40, 2000);
@@ -394,6 +586,7 @@ static void create_pwm_tab(lv_obj_t *tab)
 
     s_pwm_freq_label = lv_label_create(freq_row);
     lv_label_set_text(s_pwm_freq_label, "500 Hz");
+    animate_entrance(freq_row, 40);
 
     lv_obj_t *grid = lv_obj_create(tab);
     lv_obj_set_style_pad_all(grid, 0, 0);
@@ -410,7 +603,7 @@ static void create_pwm_tab(lv_obj_t *tab)
         lv_obj_set_flex_flow(cell, LV_FLEX_FLOW_COLUMN);
 
         lv_obj_t *title = lv_label_create(cell);
-        lv_label_set_text_fmt(title, "Channel %u", (unsigned)ch);
+        lv_label_set_text_fmt(title, "%s %u", locale->label_channel_prefix, (unsigned)ch);
 
         pwm_slider_ctx_t *ctx = &s_pwm_ctx[ch];
         ctx->channel = ch;
@@ -427,6 +620,7 @@ static void create_pwm_tab(lv_obj_t *tab)
         lv_label_set_text(value, "0");
         ctx->value_label = value;
         s_pwm_label[ch] = value;
+        animate_entrance(cell, (uint32_t)(ch * 15 + 80));
     }
 }
 
@@ -444,6 +638,7 @@ static void create_traces_tab(lv_obj_t *tab)
     lv_chart_set_range(s_chart_temp, LV_CHART_AXIS_PRIMARY_Y, -400, 2000);
     s_temp_series[0] = lv_chart_add_series(s_chart_temp, lv_palette_main(LV_PALETTE_RED), LV_CHART_AXIS_PRIMARY_Y);
     s_temp_series[1] = lv_chart_add_series(s_chart_temp, lv_palette_main(LV_PALETTE_PINK), LV_CHART_AXIS_PRIMARY_Y);
+    animate_entrance(s_chart_temp, 40);
 
     s_chart_hum = lv_chart_create(tab);
     lv_obj_set_size(s_chart_hum, LV_PCT(100), 220);
@@ -452,6 +647,7 @@ static void create_traces_tab(lv_obj_t *tab)
     lv_chart_set_range(s_chart_hum, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
     s_hum_series[0] = lv_chart_add_series(s_chart_hum, lv_palette_main(LV_PALETTE_BLUE), LV_CHART_AXIS_PRIMARY_Y);
     s_hum_series[1] = lv_chart_add_series(s_chart_hum, lv_palette_main(LV_PALETTE_TEAL), LV_CHART_AXIS_PRIMARY_Y);
+    animate_entrance(s_chart_hum, 80);
 
     s_chart_ds = lv_chart_create(tab);
     lv_obj_set_size(s_chart_ds, LV_PCT(100), 220);
@@ -462,10 +658,12 @@ static void create_traces_tab(lv_obj_t *tab)
         s_ds_series[i] = lv_chart_add_series(s_chart_ds, lv_palette_main((lv_palette_t)((i % 4) + LV_PALETTE_AMBER)),
                                              LV_CHART_AXIS_PRIMARY_Y);
     }
+    animate_entrance(s_chart_ds, 120);
 }
 
 static void create_settings_tab(lv_obj_t *tab)
 {
+    const ui_locale_pack_t *locale = get_locale();
     lv_obj_set_style_pad_all(tab, 24, 0);
     lv_obj_set_style_pad_gap(tab, 24, 0);
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
@@ -477,8 +675,8 @@ static void create_settings_tab(lv_obj_t *tab)
     lv_obj_set_style_pad_all(ssid_row, 0, 0);
     lv_obj_set_flex_flow(ssid_row, LV_FLEX_FLOW_COLUMN);
 
-    lv_obj_t *ssid_label = lv_label_create(ssid_row);
-    lv_label_set_text(ssid_label, "Wi-Fi SSID");
+    s_ssid_label = lv_label_create(ssid_row);
+    lv_label_set_text(s_ssid_label, locale->label_wifi_ssid);
     s_ssid_ta = lv_textarea_create(ssid_row);
     lv_textarea_set_one_line(s_ssid_ta, true);
     lv_obj_set_width(s_ssid_ta, 360);
@@ -490,8 +688,8 @@ static void create_settings_tab(lv_obj_t *tab)
     lv_obj_set_style_pad_all(pass_row, 0, 0);
     lv_obj_set_flex_flow(pass_row, LV_FLEX_FLOW_COLUMN);
 
-    lv_obj_t *pass_label = lv_label_create(pass_row);
-    lv_label_set_text(pass_label, "Wi-Fi Password");
+    s_password_label = lv_label_create(pass_row);
+    lv_label_set_text(s_password_label, locale->label_wifi_password);
     s_password_ta = lv_textarea_create(pass_row);
     lv_textarea_set_one_line(s_password_ta, true);
     lv_textarea_set_password_mode(s_password_ta, true);
@@ -504,8 +702,8 @@ static void create_settings_tab(lv_obj_t *tab)
     lv_obj_set_style_pad_all(mdns_row, 0, 0);
     lv_obj_set_flex_flow(mdns_row, LV_FLEX_FLOW_COLUMN);
 
-    lv_obj_t *mdns_label = lv_label_create(mdns_row);
-    lv_label_set_text(mdns_label, "mDNS Target Host");
+    s_mdns_label = lv_label_create(mdns_row);
+    lv_label_set_text(s_mdns_label, locale->label_mdns_target);
     s_mdns_ta = lv_textarea_create(mdns_row);
     lv_textarea_set_one_line(s_mdns_ta, true);
     lv_obj_set_width(s_mdns_ta, 360);
@@ -522,8 +720,8 @@ static void create_settings_tab(lv_obj_t *tab)
     lv_obj_set_style_border_width(theme_col, 0, 0);
     lv_obj_set_style_pad_all(theme_col, 0, 0);
     lv_obj_set_flex_flow(theme_col, LV_FLEX_FLOW_COLUMN);
-    lv_obj_t *theme_label = lv_label_create(theme_col);
-    lv_label_set_text(theme_label, "Dark Theme");
+    s_dark_theme_label = lv_label_create(theme_col);
+    lv_label_set_text(s_dark_theme_label, locale->label_dark_theme);
     s_theme_switch = lv_switch_create(theme_col);
 
     lv_obj_t *units_col = lv_obj_create(toggle_row);
@@ -531,21 +729,96 @@ static void create_settings_tab(lv_obj_t *tab)
     lv_obj_set_style_border_width(units_col, 0, 0);
     lv_obj_set_style_pad_all(units_col, 0, 0);
     lv_obj_set_flex_flow(units_col, LV_FLEX_FLOW_COLUMN);
-    lv_obj_t *units_label = lv_label_create(units_col);
-    lv_label_set_text(units_label, "Use °F");
+    s_use_fahrenheit_label = lv_label_create(units_col);
+    lv_label_set_text(s_use_fahrenheit_label, locale->label_use_fahrenheit);
     s_units_switch = lv_switch_create(units_col);
 
-    lv_obj_t *btn_apply = lv_btn_create(tab);
-    lv_obj_set_size(btn_apply, 140, 48);
-    lv_obj_add_event_cb(btn_apply, prefs_apply_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *btn_label = lv_label_create(btn_apply);
-    lv_label_set_text(btn_label, "Apply");
+    s_apply_btn = lv_btn_create(tab);
+    lv_obj_set_size(s_apply_btn, 140, 48);
+    lv_obj_add_event_cb(s_apply_btn, prefs_apply_event_cb, LV_EVENT_CLICKED, NULL);
+    s_apply_label = lv_label_create(s_apply_btn);
+    lv_label_set_text(s_apply_label, locale->label_apply);
 
-    lv_obj_t *btn_reset = lv_btn_create(tab);
-    lv_obj_set_size(btn_reset, 140, 48);
-    lv_obj_add_event_cb(btn_reset, prefs_reset_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *reset_label = lv_label_create(btn_reset);
-    lv_label_set_text(reset_label, "Reset");
+    s_reset_btn = lv_btn_create(tab);
+    lv_obj_set_size(s_reset_btn, 140, 48);
+    lv_obj_add_event_cb(s_reset_btn, prefs_reset_event_cb, LV_EVENT_CLICKED, NULL);
+    s_reset_label = lv_label_create(s_reset_btn);
+    lv_label_set_text(s_reset_label, locale->label_reset);
+
+    animate_entrance(ssid_row, 40);
+    animate_entrance(pass_row, 80);
+    animate_entrance(mdns_row, 120);
+    animate_entrance(toggle_row, 160);
+    animate_entrance(s_apply_btn, 200);
+    animate_entrance(s_reset_btn, 240);
+}
+
+static void create_accessibility_tab(lv_obj_t *tab)
+{
+    const ui_locale_pack_t *locale = get_locale();
+    lv_obj_set_style_pad_all(tab, 24, 0);
+    lv_obj_set_style_pad_gap(tab, 28, 0);
+    lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+
+    lv_obj_t *lang_row = lv_obj_create(tab);
+    lv_obj_set_size(lang_row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(lang_row, LV_OPA_0, 0);
+    lv_obj_set_style_border_width(lang_row, 0, 0);
+    lv_obj_set_style_pad_all(lang_row, 0, 0);
+    lv_obj_set_flex_flow(lang_row, LV_FLEX_FLOW_COLUMN);
+
+    s_language_label = lv_label_create(lang_row);
+    lv_label_set_text(s_language_label, locale->label_language);
+    s_language_dd = lv_dropdown_create(lang_row);
+    lv_dropdown_set_options(s_language_dd, locale->dropdown_languages);
+    lv_obj_set_width(s_language_dd, 220);
+
+    lv_obj_t *contrast_row = lv_obj_create(tab);
+    lv_obj_set_size(contrast_row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(contrast_row, LV_OPA_0, 0);
+    lv_obj_set_style_border_width(contrast_row, 0, 0);
+    lv_obj_set_style_pad_all(contrast_row, 0, 0);
+    lv_obj_set_flex_flow(contrast_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(contrast_row, 16, 0);
+
+    s_high_contrast_label = lv_label_create(contrast_row);
+    lv_label_set_text(s_high_contrast_label, locale->label_high_contrast);
+    s_high_contrast_switch = lv_switch_create(contrast_row);
+
+    lv_obj_t *scale_row = lv_obj_create(tab);
+    lv_obj_set_size(scale_row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(scale_row, LV_OPA_0, 0);
+    lv_obj_set_style_border_width(scale_row, 0, 0);
+    lv_obj_set_style_pad_all(scale_row, 0, 0);
+    lv_obj_set_flex_flow(scale_row, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_gap(scale_row, 8, 0);
+
+    s_text_scale_title = lv_label_create(scale_row);
+    lv_label_set_text(s_text_scale_title, locale->label_text_scale);
+    s_text_scale_slider = lv_slider_create(scale_row);
+    lv_obj_set_width(s_text_scale_slider, 360);
+    lv_slider_set_range(s_text_scale_slider, 80, 140);
+    lv_slider_set_value(s_text_scale_slider, 100, LV_ANIM_OFF);
+    lv_obj_add_event_cb(s_text_scale_slider, text_scale_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_text_scale_label = lv_label_create(scale_row);
+    update_text_scale_label();
+
+    lv_obj_t *touch_row = lv_obj_create(tab);
+    lv_obj_set_size(touch_row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(touch_row, LV_OPA_0, 0);
+    lv_obj_set_style_border_width(touch_row, 0, 0);
+    lv_obj_set_style_pad_all(touch_row, 0, 0);
+    lv_obj_set_flex_flow(touch_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(touch_row, 16, 0);
+
+    s_touch_targets_label = lv_label_create(touch_row);
+    lv_label_set_text(s_touch_targets_label, locale->label_touch_targets);
+    s_touch_targets_switch = lv_switch_create(touch_row);
+
+    animate_entrance(lang_row, 40);
+    animate_entrance(contrast_row, 80);
+    animate_entrance(scale_row, 120);
+    animate_entrance(touch_row, 160);
 }
 
 void ui_init(const ui_callbacks_t *callbacks, void *ctx)
@@ -558,6 +831,13 @@ void ui_init(const ui_callbacks_t *callbacks, void *ctx)
     s_callback_ctx = ctx;
     s_updating_ui = false;
     memset(&s_active_prefs, 0, sizeof(s_active_prefs));
+    s_active_prefs.text_scale_percent = 100;
+    s_active_prefs.language = HMI_LANGUAGE_EN;
+    s_active_prefs.dark_theme = true;
+    s_last_connected = false;
+    s_last_crc_ok = true;
+    s_last_sequence_id = 0;
+    s_has_last_proto_update = false;
 
     apply_theme(true);
 
@@ -566,18 +846,21 @@ void ui_init(const ui_callbacks_t *callbacks, void *ctx)
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x101418), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
-    lv_obj_t *tabview = lv_tabview_create(scr, LV_DIR_TOP, 70);
-    s_dashboard_tab = lv_tabview_add_tab(tabview, "Dashboard");
-    s_gpio_tab = lv_tabview_add_tab(tabview, "GPIO");
-    s_pwm_tab = lv_tabview_add_tab(tabview, "PWM");
-    s_traces_tab = lv_tabview_add_tab(tabview, "Traces");
-    s_settings_tab = lv_tabview_add_tab(tabview, "Settings");
+    s_tabview = lv_tabview_create(scr, LV_DIR_TOP, 70);
+    s_dashboard_tab = lv_tabview_add_tab(s_tabview, "Dashboard");
+    s_gpio_tab = lv_tabview_add_tab(s_tabview, "GPIO");
+    s_pwm_tab = lv_tabview_add_tab(s_tabview, "PWM");
+    s_traces_tab = lv_tabview_add_tab(s_tabview, "Traces");
+    s_settings_tab = lv_tabview_add_tab(s_tabview, "Settings");
+    s_accessibility_tab = lv_tabview_add_tab(s_tabview, "Accessibility");
 
     create_dashboard_tab(s_dashboard_tab);
     create_gpio_tab(s_gpio_tab);
     create_pwm_tab(s_pwm_tab);
     create_traces_tab(s_traces_tab);
     create_settings_tab(s_settings_tab);
+    create_accessibility_tab(s_accessibility_tab);
+    refresh_localised_text();
 
     lvgl_port_unlock();
 }
@@ -585,6 +868,7 @@ void ui_init(const ui_callbacks_t *callbacks, void *ctx)
 static void update_gpio_state(const proto_sensor_update_t *update)
 {
     s_updating_ui = true;
+    const ui_locale_pack_t *locale = get_locale();
     for (uint8_t dev = 0; dev < GPIO_DEVICE_COUNT; ++dev) {
         uint16_t porta = 0;
         uint16_t portb = 0;
@@ -603,10 +887,10 @@ static void update_gpio_state(const proto_sensor_update_t *update)
             if (sw) {
                 if (on) {
                     lv_obj_add_state(sw, LV_STATE_CHECKED);
-                    lv_label_set_text(s_gpio_state_label[dev][pin], "ON");
+                    lv_label_set_text(s_gpio_state_label[dev][pin], locale->label_gpio_on);
                 } else {
                     lv_obj_clear_state(sw, LV_STATE_CHECKED);
-                    lv_label_set_text(s_gpio_state_label[dev][pin], "OFF");
+                    lv_label_set_text(s_gpio_state_label[dev][pin], locale->label_gpio_off);
                 }
             }
         }
@@ -663,11 +947,119 @@ static void update_charts(const proto_sensor_update_t *update, bool use_fahrenhe
     }
 }
 
+static void refresh_localised_text(void)
+{
+    const ui_locale_pack_t *locale = get_locale();
+    if (!locale) {
+        return;
+    }
+    if (s_tabview) {
+        if (s_dashboard_tab) {
+            lv_tabview_set_tab_title(s_tabview, lv_obj_get_index(s_dashboard_tab), locale->tab_dashboard);
+        }
+        if (s_gpio_tab) {
+            lv_tabview_set_tab_title(s_tabview, lv_obj_get_index(s_gpio_tab), locale->tab_gpio);
+        }
+        if (s_pwm_tab) {
+            lv_tabview_set_tab_title(s_tabview, lv_obj_get_index(s_pwm_tab), locale->tab_pwm);
+        }
+        if (s_traces_tab) {
+            lv_tabview_set_tab_title(s_tabview, lv_obj_get_index(s_traces_tab), locale->tab_traces);
+        }
+        if (s_settings_tab) {
+            lv_tabview_set_tab_title(s_tabview, lv_obj_get_index(s_settings_tab), locale->tab_settings);
+        }
+        if (s_accessibility_tab) {
+            lv_tabview_set_tab_title(s_tabview, lv_obj_get_index(s_accessibility_tab), locale->tab_accessibility);
+        }
+    }
+
+    if (s_ssid_label) {
+        lv_label_set_text(s_ssid_label, locale->label_wifi_ssid);
+    }
+    if (s_password_label) {
+        lv_label_set_text(s_password_label, locale->label_wifi_password);
+    }
+    if (s_mdns_label) {
+        lv_label_set_text(s_mdns_label, locale->label_mdns_target);
+    }
+    if (s_dark_theme_label) {
+        lv_label_set_text(s_dark_theme_label, locale->label_dark_theme);
+    }
+    if (s_use_fahrenheit_label) {
+        lv_label_set_text(s_use_fahrenheit_label, locale->label_use_fahrenheit);
+    }
+    if (s_apply_label) {
+        lv_label_set_text(s_apply_label, locale->label_apply);
+    }
+    if (s_reset_label) {
+        lv_label_set_text(s_reset_label, locale->label_reset);
+    }
+    if (s_language_label) {
+        lv_label_set_text(s_language_label, locale->label_language);
+    }
+    if (s_high_contrast_label) {
+        lv_label_set_text(s_high_contrast_label, locale->label_high_contrast);
+    }
+    if (s_text_scale_title) {
+        lv_label_set_text(s_text_scale_title, locale->label_text_scale);
+    }
+    if (s_touch_targets_label) {
+        lv_label_set_text(s_touch_targets_label, locale->label_touch_targets);
+    }
+    if (s_language_dd) {
+        lv_dropdown_set_options(s_language_dd, locale->dropdown_languages);
+    }
+
+    if (s_wifi_badge) {
+        if (s_last_sequence_id != 0U) {
+            lv_label_set_text_fmt(s_wifi_badge, "%s: %u", locale->label_sequence_prefix, (unsigned)s_last_sequence_id);
+        } else {
+            lv_label_set_text_fmt(s_wifi_badge, "%s: --", locale->label_sequence_prefix);
+        }
+    }
+    update_text_scale_label();
+
+    if (s_status_label) {
+        ui_update_connection_status(s_last_connected);
+    }
+    if (s_crc_badge) {
+        if (s_has_last_proto_update) {
+            ui_update_crc_status(s_last_crc_ok);
+        } else {
+            lv_label_set_text(s_crc_badge, locale->label_crc_unknown);
+            lv_obj_set_style_text_color(s_crc_badge, lv_color_hex(0xAAAAAA), 0);
+        }
+    }
+
+    if (s_has_last_proto_update) {
+        ui_update_sensor_data(&s_last_proto_update, s_active_prefs.use_fahrenheit);
+    } else {
+        for (size_t i = 0; i < 2; ++i) {
+            if (s_sht20_name[i]) {
+                lv_label_set_text_fmt(s_sht20_name[i], "%s %u", locale->label_sensor_fallback, (unsigned)(i + 1));
+            }
+            if (s_sht20_temp[i]) {
+                lv_label_set_text_fmt(s_sht20_temp[i], "%s: --", locale->label_temperature_prefix);
+            }
+            if (s_sht20_hum[i]) {
+                lv_label_set_text_fmt(s_sht20_hum[i], "%s: --", locale->label_humidity_prefix);
+            }
+        }
+        for (size_t i = 0; i < 4; ++i) {
+            if (s_ds18_temp[i]) {
+                lv_label_set_text_fmt(s_ds18_temp[i], "%s: --", locale->label_temperature_prefix);
+            }
+        }
+    }
+}
+
 void ui_update_sensor_data(const proto_sensor_update_t *update, bool use_fahrenheit)
 {
     if (!update) {
         return;
     }
+    const ui_locale_pack_t *locale = get_locale();
     char buf[64];
     for (size_t i = 0; i < 2; ++i) {
         if (i < update->sht20_count) {
@@ -675,21 +1067,21 @@ void ui_update_sensor_data(const proto_sensor_update_t *update, bool use_fahrenh
             const char *suffix = reading->valid ? "" : " (fault)";
             lv_label_set_text_fmt(s_sht20_name[i], "%s%s", reading->id, suffix);
             if (reading->valid && isfinite(reading->temperature_c)) {
-                lv_label_set_text_fmt(s_sht20_temp[i], "Temp: %s",
+                lv_label_set_text_fmt(s_sht20_temp[i], "%s: %s", locale->label_temperature_prefix,
                                       format_temperature(buf, sizeof(buf), reading->temperature_c, use_fahrenheit));
             } else {
-                lv_label_set_text(s_sht20_temp[i], "Temp: --");
+                lv_label_set_text_fmt(s_sht20_temp[i], "%s: --", locale->label_temperature_prefix);
             }
             if (reading->valid && isfinite(reading->humidity_percent)) {
-                snprintf(buf, sizeof(buf), "RH: %.1f %%", reading->humidity_percent);
-                lv_label_set_text(s_sht20_hum[i], buf);
+                snprintf(buf, sizeof(buf), "%.1f %%", reading->humidity_percent);
+                lv_label_set_text_fmt(s_sht20_hum[i], "%s: %s", locale->label_humidity_prefix, buf);
             } else {
-                lv_label_set_text(s_sht20_hum[i], "RH: --");
+                lv_label_set_text_fmt(s_sht20_hum[i], "%s: --", locale->label_humidity_prefix);
             }
         } else {
-            lv_label_set_text_fmt(s_sht20_name[i], "Sensor %u", (unsigned)(i + 1));
-            lv_label_set_text(s_sht20_temp[i], "Temp: --");
-            lv_label_set_text(s_sht20_hum[i], "RH: --");
+            lv_label_set_text_fmt(s_sht20_name[i], "%s %u", locale->label_sensor_fallback, (unsigned)(i + 1));
+            lv_label_set_text_fmt(s_sht20_temp[i], "%s: --", locale->label_temperature_prefix);
+            lv_label_set_text_fmt(s_sht20_hum[i], "%s: --", locale->label_humidity_prefix);
         }
     }
     for (size_t i = 0; i < 4; ++i) {
@@ -697,19 +1089,21 @@ void ui_update_sensor_data(const proto_sensor_update_t *update, bool use_fahrenh
             char rom[17];
             format_rom_code(update->ds18b20[i].rom_code, rom, sizeof(rom));
             lv_label_set_text_fmt(s_ds18_name[i], "%s", rom);
-            lv_label_set_text_fmt(s_ds18_temp[i], "Temp: %s",
-                                  format_temperature(buf, sizeof(buf), update->ds18b20[i].temperature_c,
-                                                     use_fahrenheit));
+            lv_label_set_text_fmt(s_ds18_temp[i], "%s: %s", locale->label_temperature_prefix,
+                                  format_temperature(buf, sizeof(buf), update->ds18b20[i].temperature_c, use_fahrenheit));
         } else {
-            lv_label_set_text(s_ds18_temp[i], "Temp: --");
+            lv_label_set_text_fmt(s_ds18_temp[i], "%s: --", locale->label_temperature_prefix);
         }
     }
     if (s_wifi_badge) {
-        lv_label_set_text_fmt(s_wifi_badge, "Seq: %u", update->sequence_id);
+        lv_label_set_text_fmt(s_wifi_badge, "%s: %u", locale->label_sequence_prefix, update->sequence_id);
     }
     update_gpio_state(update);
     update_pwm_state(update);
     update_charts(update, use_fahrenheit);
+    s_last_sequence_id = update->sequence_id;
+    s_last_proto_update = *update;
+    s_has_last_proto_update = true;
 }
 
 void ui_update_connection_status(bool connected)
@@ -717,11 +1111,13 @@ void ui_update_connection_status(bool connected)
     if (!s_status_label) {
         return;
     }
+    s_last_connected = connected;
+    const ui_locale_pack_t *locale = get_locale();
     if (connected) {
-        lv_label_set_text(s_status_label, "Wi-Fi: Connected");
+        lv_label_set_text(s_status_label, locale->label_wifi_connected);
         lv_obj_set_style_text_color(s_status_label, lv_color_hex(0x66FF66), 0);
     } else {
-        lv_label_set_text(s_status_label, "Wi-Fi: Disconnected");
+        lv_label_set_text(s_status_label, locale->label_wifi_disconnected);
         lv_obj_set_style_text_color(s_status_label, lv_color_hex(0xFF5555), 0);
     }
 }
@@ -731,11 +1127,13 @@ void ui_update_crc_status(bool crc_ok)
     if (!s_crc_badge) {
         return;
     }
+    s_last_crc_ok = crc_ok;
+    const ui_locale_pack_t *locale = get_locale();
     if (crc_ok) {
-        lv_label_set_text(s_crc_badge, "CRC: OK");
+        lv_label_set_text(s_crc_badge, locale->label_crc_ok);
         lv_obj_set_style_text_color(s_crc_badge, lv_color_hex(0x66FFAA), 0);
     } else {
-        lv_label_set_text(s_crc_badge, "CRC: ERROR");
+        lv_label_set_text(s_crc_badge, locale->label_crc_error);
         lv_obj_set_style_text_color(s_crc_badge, lv_color_hex(0xFF6666), 0);
     }
 }
@@ -761,7 +1159,30 @@ void ui_apply_preferences(const hmi_user_preferences_t *prefs)
     } else {
         lv_obj_clear_state(s_units_switch, LV_STATE_CHECKED);
     }
+    if (s_high_contrast_switch) {
+        if (prefs->high_contrast) {
+            lv_obj_add_state(s_high_contrast_switch, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(s_high_contrast_switch, LV_STATE_CHECKED);
+        }
+    }
+    if (s_touch_targets_switch) {
+        if (prefs->large_touch_targets) {
+            lv_obj_add_state(s_touch_targets_switch, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(s_touch_targets_switch, LV_STATE_CHECKED);
+        }
+    }
+    if (s_text_scale_slider) {
+        lv_slider_set_value(s_text_scale_slider, prefs->text_scale_percent, LV_ANIM_OFF);
+        update_text_scale_label();
+    }
+    if (s_language_dd) {
+        lv_dropdown_set_selected(s_language_dd, prefs->language < HMI_LANGUAGE_MAX ? prefs->language : HMI_LANGUAGE_EN);
+    }
     s_updating_ui = false;
+    apply_touch_target_style();
+    refresh_localised_text();
 }
 
 void ui_process(void)
@@ -813,9 +1234,11 @@ void ui_test_handle_pwm_frequency(uint16_t freq)
 }
 
 void ui_test_apply_preferences_inputs(const char *ssid, const char *password, const char *mdns, bool dark,
-                                      bool fahrenheit)
+                                      bool fahrenheit, bool high_contrast, bool large_touch_targets,
+                                      uint8_t text_scale_percent, hmi_language_t language)
 {
-    dispatch_apply_preferences(ssid, password, mdns, dark, fahrenheit);
+    dispatch_apply_preferences(ssid, password, mdns, dark, fahrenheit, high_contrast, large_touch_targets,
+                               text_scale_percent, language);
 }
 
 void ui_test_trigger_reset_preferences(void)

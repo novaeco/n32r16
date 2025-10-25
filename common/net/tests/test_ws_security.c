@@ -40,6 +40,61 @@ TEST_CASE("ws security encrypts and decrypts payloads", "[net][ws]")
                       ws_security_decrypt(&rx_ctx, frame, frame_len, &plaintext_len, &counter_state));
 }
 
+TEST_CASE("ws security rejects tampered ciphertext", "[net][ws]")
+{
+    const uint8_t secret[32] = {0};
+    ws_security_config_t cfg = {
+        .secret = secret,
+        .secret_len = sizeof(secret),
+        .enable_encryption = true,
+    };
+    ws_security_context_t tx_ctx = {0};
+    ws_security_context_t rx_ctx = {0};
+    TEST_ASSERT_EQUAL(ESP_OK, ws_security_context_init(&tx_ctx, &cfg));
+    TEST_ASSERT_EQUAL(ESP_OK, ws_security_context_init(&rx_ctx, &cfg));
+
+    const uint8_t payload[] = {0x01, 0x02, 0x03};
+    uint8_t frame[128] = {0};
+    size_t frame_len = 0;
+    TEST_ASSERT_EQUAL(ESP_OK, ws_security_encrypt(&tx_ctx, payload, sizeof(payload), frame, sizeof(frame), &frame_len));
+    TEST_ASSERT_GREATER_THAN(sizeof(payload), frame_len);
+
+    frame[frame_len - 1] ^= 0xAA;
+    size_t plaintext_len = 0;
+    uint64_t counter = 0;
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_RESPONSE,
+                      ws_security_decrypt(&rx_ctx, frame, frame_len, &plaintext_len, &counter));
+}
+
+TEST_CASE("ws security encrypts burst of frames", "[net][ws]")
+{
+    const uint8_t secret[32] = {0};
+    ws_security_config_t cfg = {
+        .secret = secret,
+        .secret_len = sizeof(secret),
+        .enable_encryption = true,
+    };
+    ws_security_context_t tx_ctx = {0};
+    ws_security_context_t rx_ctx = {0};
+    TEST_ASSERT_EQUAL(ESP_OK, ws_security_context_init(&tx_ctx, &cfg));
+    TEST_ASSERT_EQUAL(ESP_OK, ws_security_context_init(&rx_ctx, &cfg));
+
+    uint8_t payload[16] = {0};
+    for (uint32_t i = 0; i < 256; ++i) {
+        for (size_t j = 0; j < sizeof(payload); ++j) {
+            payload[j] = (uint8_t)(i + j);
+        }
+        uint8_t frame[128] = {0};
+        size_t frame_len = 0;
+        TEST_ASSERT_EQUAL(ESP_OK, ws_security_encrypt(&tx_ctx, payload, sizeof(payload), frame, sizeof(frame), &frame_len));
+        size_t plaintext_len = 0;
+        uint64_t counter = 0;
+        TEST_ASSERT_EQUAL(ESP_OK, ws_security_decrypt(&rx_ctx, frame, frame_len, &plaintext_len, &counter));
+        TEST_ASSERT_EQUAL(sizeof(payload), plaintext_len);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(payload, frame, sizeof(payload));
+    }
+}
+
 TEST_CASE("ws security validates handshake signatures", "[net][ws]")
 {
     const uint8_t secret[] = {
