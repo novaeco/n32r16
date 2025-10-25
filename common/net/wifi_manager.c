@@ -12,6 +12,7 @@
 #include "nvs_flash.h"
 #include "nvs_flash_secure.h"
 #include "wifi_provisioning/manager.h"
+#include "wifi_provisioning/scheme_ble.h"
 #include "wifi_provisioning/scheme_softap.h"
 #include "wifi_provisioning/security1.h"
 #include <string.h>
@@ -27,6 +28,11 @@ static bool s_connected = false;
 static TimerHandle_t s_reconnect_timer;
 static uint32_t s_backoff_ms = 1000;
 static bool s_force_reprovision;
+
+__attribute__((weak)) esp_err_t wifi_manager_prov_mgr_init(const wifi_prov_mgr_config_t config)
+{
+    return wifi_prov_mgr_init(config);
+}
 
 /**
  * @brief Timer callback that retries Wi-Fi connection after a backoff delay.
@@ -167,6 +173,55 @@ static void format_service_name(const wifi_manager_config_t *config, char *out, 
              mac[3], mac[4], mac[5]);
 }
 
+esp_err_t wifi_manager_prepare_provisioning(const wifi_manager_config_t *config, bool *using_ble)
+{
+    if (!config) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    wifi_prov_mgr_config_t prov_cfg = {
+        .scheme = wifi_prov_scheme_softap,
+        .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE,
+        .app_event_handler = {
+            .event_cb = provisioning_event_handler,
+            .user_data = NULL,
+        },
+    };
+
+    bool prefer_ble = config->prefer_ble;
+    bool active_ble = false;
+    if (prefer_ble) {
+        prov_cfg.scheme = wifi_prov_scheme_ble;
+        prov_cfg.scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM;
+        active_ble = true;
+        ESP_LOGI(TAG, "Attempting BLE provisioning scheme");
+    }
+
+    esp_err_t prov_err = wifi_manager_prov_mgr_init(prov_cfg);
+    if (prov_err != ESP_OK) {
+        if (prefer_ble) {
+            ESP_LOGW(TAG, "BLE provisioning unavailable (%s), falling back to SoftAP",
+                     esp_err_to_name(prov_err));
+            prov_cfg.scheme = wifi_prov_scheme_softap;
+            prov_cfg.scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE;
+            active_ble = false;
+            esp_err_t softap_err = wifi_manager_prov_mgr_init(prov_cfg);
+            if (softap_err != ESP_OK) {
+                ESP_LOGE(TAG, "SoftAP provisioning init failed (%s)", esp_err_to_name(softap_err));
+                return softap_err;
+            }
+        } else {
+            return prov_err;
+        }
+    }
+
+    if (using_ble) {
+        *using_ble = active_ble;
+    }
+
+    return ESP_OK;
+}
+
 /**
  * @brief Start Wi-Fi provisioning if required and connect to the configured network.
  *
@@ -192,15 +247,6 @@ esp_err_t wifi_manager_start(const wifi_manager_config_t *config)
         s_reconnect_timer = xTimerCreate("wifi_reconnect", pdMS_TO_TICKS(1000), pdFALSE, NULL, reconnect_timer_cb);
     }
 
-    wifi_prov_mgr_config_t prov_cfg = {
-        .scheme = wifi_prov_scheme_softap,
-        .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE,
-        .app_event_handler = {
-            .event_cb = provisioning_event_handler,
-            .user_data = NULL,
-        },
-    };
-
     esp_err_t err = esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         return err;
@@ -210,7 +256,7 @@ esp_err_t wifi_manager_start(const wifi_manager_config_t *config)
         return err;
     }
 
-    ESP_ERROR_CHECK(wifi_prov_mgr_init(prov_cfg));
+    ESP_ERROR_CHECK(wifi_manager_prepare_provisioning(config, NULL));
 
     bool provisioned = false;
     ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&provisioned));

@@ -71,6 +71,13 @@ menu "Sensor Node Options"
     config SENSOR_PROV_POP
         string "Provisioning proof-of-possession"
         default "sensor-pop"
+    config SENSOR_PROV_PREFER_BLE
+        bool "Préférer le schéma de provisioning BLE"
+        default n
+        help
+            Active la tentative de provisioning via BLE (ESP BLE Provisioning).
+            Lorsque le contrôleur Bluetooth est indisponible, le firmware
+            bascule automatiquement vers le schéma SoftAP classique.
     config SENSOR_OTA_URL
         string "HTTPS OTA manifest URL"
         default "https://example.com/sensor/ota.json"

@@ -51,6 +51,11 @@ void sensor_ws_server_start(sensor_data_model_t *model)
         .power_save = false,
         .service_name_suffix = CONFIG_SENSOR_PROV_SERVICE_NAME,
         .pop = CONFIG_SENSOR_PROV_POP,
+#ifdef CONFIG_SENSOR_PROV_PREFER_BLE
+        .prefer_ble = true,
+#else
+        .prefer_ble = false,
+#endif
     };
     ESP_ERROR_CHECK(wifi_manager_start(&wifi_cfg));
     ESP_ERROR_CHECK(mdns_helper_start("sensor-node", "Sensor Node", CONFIG_SENSOR_WS_PORT));

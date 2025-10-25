@@ -13,5 +13,6 @@ typedef struct {
 } wifi_manager_config_t;
 
 esp_err_t wifi_manager_start(const wifi_manager_config_t *config);
+esp_err_t wifi_manager_prepare_provisioning(const wifi_manager_config_t *config, bool *using_ble);
 bool wifi_manager_is_connected(void);
 void wifi_manager_request_reprovision(void);

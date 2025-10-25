@@ -197,6 +197,11 @@ git submodule update --init --recursive
   idf.py save-defconfig
   ```
 - Conserver la cohérence des options mDNS (`CONFIG_HMI_SENSOR_HOSTNAME`) et des ports WebSocket/TLS.
+- Nouvel interrupteur booléen : `CONFIG_SENSOR_PROV_PREFER_BLE` et `CONFIG_HMI_PROV_PREFER_BLE`
+  permettent de privilégier l'initialisation du schéma de provisioning BLE. En cas
+  d'indisponibilité du contrôleur Bluetooth (manque de mémoire, module sans BLE,
+  désactivation menuconfig), le firmware repasse automatiquement sur SoftAP sans
+  intervention manuelle.
 - Vérifier les tailles de partitions :
   ```bash
   idf.py partition-table
