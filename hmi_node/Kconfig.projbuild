@@ -2,6 +2,15 @@ menu "HMI Node Options"
     config HMI_SENSOR_HOSTNAME
         string "Sensor fallback hostname"
         default "sensor-node.local"
+    config HMI_ALLOW_PLACEHOLDER_SECRETS
+        bool "Allow building with placeholder security material"
+        default n
+        help
+            Enable this option only for development images where placeholder
+            bearer tokens, provisioning POPs, and OTA manifest URLs remain.
+            Production builds must disable it and provide unique credentials;
+            compile-time assertions in app_main.c enforce the policy.
+
     config HMI_SENSOR_PORT
         int "Sensor WebSocket port"
         range 80 65535

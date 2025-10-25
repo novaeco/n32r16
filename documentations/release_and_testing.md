@@ -147,3 +147,17 @@ Les pages HTML sont produites dans `documentations/doxygen/output/html/index.htm
 - Documenter dans chaque release les paramètres `sdkconfig.defaults` divergents.
 - Tester un firmware sur un échantillon minimum de 3 cartes par variante matérielle.
 
+## 7. Rotation des certificats et gestion sécurisée des POP/jetons
+
+- **Rotation TLS** :
+  - Générer un nouveau triplet `server_cert.pem` / `server_key.pem` signé par une autorité racine mise à jour (`ca_cert.pem`).
+  - Injecter les PEM dans NVS (namespace `cert_store`) via `nvs_partition_gen.py` ou flasher l'image SPIFFS `storage` (`0x414000`).
+  - Vérifier au boot via les logs `cert_store` que les surcharges NVS/SPIFFS sont détectées (`Loaded ... override`).
+  - Déployer simultanément les certificats clients/HMI pour éviter les coupures de service.
+- **Hygiène des preuves de possession (POP) et jetons WebSocket** :
+  - Les builds de production doivent laisser `CONFIG_SENSOR_ALLOW_PLACEHOLDER_SECRETS=n` et `CONFIG_HMI_ALLOW_PLACEHOLDER_SECRETS=n`.
+  - Chaque release doit modifier `CONFIG_SENSOR_WS_AUTH_TOKEN`, `CONFIG_HMI_WS_AUTH_TOKEN`, `CONFIG_SENSOR_PROV_POP`, `CONFIG_HMI_PROV_POP`, `CONFIG_SENSOR_OTA_URL` et `CONFIG_HMI_OTA_URL` avec des valeurs uniques par environnement.
+  - Archiver les secrets en coffre-fort (HashiCorp Vault, Azure Key Vault, etc.) et restreindre l'accès aux binaires générés.
+  - Valider lors de la recette que les assertions de démarrage échouent si un firmware placeholder est flashé (protection contre les
+    fuites de builds internes).
+

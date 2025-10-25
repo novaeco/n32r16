@@ -49,6 +49,15 @@ menu "Sensor Node Options"
         help
             String identifier for the selected PWM expansion backend. Exposed to the
             application for conditional logic and telemetry labelling.
+    config SENSOR_ALLOW_PLACEHOLDER_SECRETS
+        bool "Allow building with placeholder security material"
+        default n
+        help
+            Enable this option only for development images where placeholder
+            bearer tokens, provisioning POPs, and OTA manifest URLs remain
+            configured. Production builds must provide unique values to avoid
+            compilation failures enforced by app_main.c.
+
     config SENSOR_WS_PORT
         int "WebSocket server port"
         range 80 65535
