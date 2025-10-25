@@ -96,3 +96,9 @@ def test_discovery_cache_round_trip() -> None:
     recalled_uri, recalled_sni = cache.recall()
     assert recalled_uri == "wss://[fe80::1]:8443/ws"
     assert recalled_sni == "sensor.prod"
+
+
+def test_build_uri_without_addresses_raises() -> None:
+    record = MdnsRecord(addresses=[], port=1234, txt={})
+    with pytest.raises(ValueError):
+        build_uri(record)

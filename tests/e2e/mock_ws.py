@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Tuple
 
 from . import proto
 
@@ -47,6 +47,22 @@ class MockSensorServer:
     @property
     def connection_count(self) -> int:
         return len(self._connections)
+
+    def iter_connections(self) -> Tuple[MockConnection, ...]:
+        """Return a snapshot of active connections."""
+        return tuple(self._connections)
+
+    async def broadcast_frame(self, frame: bytes) -> None:
+        """Push a preframed payload to every connected HMI client."""
+        for conn in self._connections:
+            await conn.server_send(frame)
+
+    async def broadcast_update(self, update: dict, *, use_cbor: bool = False) -> bytes:
+        """Encode a telemetry update and fan it out to all connections."""
+        payload = proto.encode_sensor_update(update, use_cbor=use_cbor)
+        frame = proto.frame_payload(payload)
+        await self.broadcast_frame(frame)
+        return frame
 
 
 class MockHMIClient:

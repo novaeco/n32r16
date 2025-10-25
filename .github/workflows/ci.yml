@@ -6,6 +6,41 @@ on:
   pull_request:
 
 jobs:
+  clang-quality:
+    name: Clang static analysis
+    runs-on: ubuntu-22.04
+    container: espressif/idf:release-v5.5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang toolchain
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang-16 clang-tidy-16 clang-format-16
+      - name: Check formatting (clang-format)
+        run: |
+          set -o pipefail
+          git ls-files '*.c' '*.h' '*.cpp' '*.hpp' '*.cc' '*.hh' | \
+            xargs -r clang-format-16 --dry-run --Werror
+      - name: Run clang-tidy on sensor_node
+        env:
+          CLANG_TIDY: clang-tidy-16
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py fullclean
+          idf.py set-target esp32s3
+          idf.py clang-tidy
+        working-directory: sensor_node
+      - name: Run clang-tidy on hmi_node
+        env:
+          CLANG_TIDY: clang-tidy-16
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py fullclean
+          idf.py set-target esp32s3
+          idf.py clang-tidy
+        working-directory: hmi_node
+
   e2e-tests:
     name: Python E2E tests
     runs-on: ubuntu-22.04
@@ -43,3 +78,64 @@ jobs:
           . /opt/esp/idf/export.sh
           idf.py build
         working-directory: ${{ matrix.project }}
+
+  unity-tests:
+    name: Unity test suites
+    runs-on: ubuntu-22.04
+    container: espressif/idf:release-v5.5
+    strategy:
+      matrix:
+        project: [sensor_node, hmi_node]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute unit tests (${{ matrix.project }})
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py fullclean
+          idf.py set-target esp32s3
+          idf.py -T
+        working-directory: ${{ matrix.project }}
+
+  coverage:
+    name: Coverage (Unity + gcovr)
+    runs-on: ubuntu-22.04
+    container: espressif/idf:release-v5.5
+    needs:
+      - unity-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install coverage tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install gcovr
+      - name: Sensor node coverage run
+        run: |
+          . /opt/esp/idf/export.sh
+          export SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.coverage"
+          idf.py fullclean
+          idf.py set-target esp32s3
+          idf.py -T
+        working-directory: sensor_node
+      - name: HMI node coverage run
+        run: |
+          . /opt/esp/idf/export.sh
+          export SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.coverage"
+          idf.py fullclean
+          idf.py set-target esp32s3
+          idf.py -T
+        working-directory: hmi_node
+      - name: Aggregate coverage reports
+        run: |
+          mkdir -p coverage
+          python tools/run_coverage.py \
+            --summary coverage/summary.txt \
+            --html coverage/index.html \
+            --xml coverage/coverage.xml \
+            --badge coverage_badge.svg
+      - name: Publish coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            coverage_badge.svg
+            coverage/
