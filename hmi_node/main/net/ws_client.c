@@ -5,13 +5,18 @@
 #include "common/net/ws_client.h"
 #include "common/proto/messages.h"
 #include "common/util/monotonic.h"
+#include "prefs_store.h"
 #include "cert_store.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/inet.h"
+#include "lwip/ip6_addr.h"
 #include "mdns.h"
+#include "nvs.h"
 #include "sdkconfig.h"
+#include <stdbool.h>
 #include <string.h>
 
 static const char *TAG = "hmi_ws";
@@ -19,6 +24,252 @@ static const char *TAG = "hmi_ws";
 static hmi_data_model_t *s_model;
 static bool s_use_cbor;
 static uint32_t s_next_command_seq;
+static char s_discovered_server_name[64];
+
+#define DISCOVERY_CACHE_NAMESPACE "hmi_net"
+#define DISCOVERY_CACHE_URI_KEY "last_uri"
+#define DISCOVERY_CACHE_SNI_KEY "last_sni"
+
+typedef struct {
+    char proto[8];
+    char path[64];
+    char host[64];
+} service_metadata_t;
+
+#ifndef INET6_ADDRSTRLEN
+#define INET6_ADDRSTRLEN 46
+#endif
+
+static void set_discovered_server_name(const char *name)
+{
+    if (!name || !name[0]) {
+        s_discovered_server_name[0] = '\0';
+        return;
+    }
+    strlcpy(s_discovered_server_name, name, sizeof(s_discovered_server_name));
+}
+
+static const char *select_tls_server_name(const char *fallback_host)
+{
+    if (CONFIG_HMI_WS_TLS_SNI_OVERRIDE[0] != '\0') {
+        return CONFIG_HMI_WS_TLS_SNI_OVERRIDE;
+    }
+    if (s_discovered_server_name[0] != '\0') {
+        return s_discovered_server_name;
+    }
+    if (fallback_host && fallback_host[0] != '\0') {
+        return fallback_host;
+    }
+    return NULL;
+}
+
+static bool load_cached_service(char *uri, size_t uri_len)
+{
+    if (!uri || uri_len == 0) {
+        return false;
+    }
+    esp_err_t err = hmi_prefs_store_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "secure NVS unavailable: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    nvs_handle_t handle = 0;
+    err = nvs_open_from_partition("nvs", DISCOVERY_CACHE_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    size_t required = uri_len;
+    err = nvs_get_str(handle, DISCOVERY_CACHE_URI_KEY, uri, &required);
+    if (err == ESP_OK) {
+        size_t sni_len = sizeof(s_discovered_server_name);
+        err = nvs_get_str(handle, DISCOVERY_CACHE_SNI_KEY, s_discovered_server_name, &sni_len);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            s_discovered_server_name[0] = '\0';
+            err = ESP_OK;
+        }
+    }
+    nvs_close(handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "failed to load discovery cache: %s", esp_err_to_name(err));
+        return false;
+    }
+    ESP_LOGI(TAG, "Using cached sensor endpoint %s", uri);
+    return true;
+}
+
+static void store_cached_service(const char *uri)
+{
+    if (!uri || !uri[0]) {
+        return;
+    }
+    esp_err_t err = hmi_prefs_store_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "secure NVS unavailable: %s", esp_err_to_name(err));
+        return;
+    }
+
+    nvs_handle_t handle = 0;
+    err = nvs_open_from_partition("nvs", DISCOVERY_CACHE_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to open discovery cache namespace: %s", esp_err_to_name(err));
+        return;
+    }
+
+    esp_err_t set_err = nvs_set_str(handle, DISCOVERY_CACHE_URI_KEY, uri);
+    if (set_err == ESP_OK) {
+        const char *sni = s_discovered_server_name[0] ? s_discovered_server_name : "";
+        set_err = nvs_set_str(handle, DISCOVERY_CACHE_SNI_KEY, sni);
+    }
+    if (set_err == ESP_OK) {
+        set_err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    if (set_err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to persist discovery cache: %s", esp_err_to_name(set_err));
+    }
+}
+
+static void service_metadata_init(service_metadata_t *meta)
+{
+    if (!meta) {
+        return;
+    }
+    strlcpy(meta->proto, "wss", sizeof(meta->proto));
+    strlcpy(meta->path, "/ws", sizeof(meta->path));
+    meta->host[0] = '\0';
+}
+
+static bool is_token_valid(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+    size_t len = strlen(value);
+    if (len == 0 || len >= 32) {
+        return false;
+    }
+    for (size_t i = 0; i < len; ++i) {
+        char c = value[i];
+        if (!(c == '-' || c == '+' || c == '.' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void sanitize_path(char *dest, size_t dest_len, const char *value)
+{
+    if (!dest || dest_len == 0) {
+        return;
+    }
+    if (!value || !value[0]) {
+        strlcpy(dest, "/ws", dest_len);
+        return;
+    }
+    if (value[0] != '/') {
+        char tmp[64];
+        int written = snprintf(tmp, sizeof(tmp), "/%s", value);
+        if (written > 0) {
+            strlcpy(dest, tmp, dest_len);
+        } else {
+            strlcpy(dest, "/ws", dest_len);
+        }
+        return;
+    }
+    strlcpy(dest, value, dest_len);
+}
+
+static void apply_txt_metadata(service_metadata_t *meta, const mdns_result_t *result)
+{
+    if (!meta || !result || !result->txt || result->txt_count == 0) {
+        return;
+    }
+    for (size_t i = 0; i < result->txt_count; ++i) {
+        const mdns_txt_item_t *item = &result->txt[i];
+        if (!item->key || !item->value) {
+            continue;
+        }
+        if (strcmp(item->key, "proto") == 0) {
+            if (is_token_valid(item->value)) {
+                strlcpy(meta->proto, item->value, sizeof(meta->proto));
+            }
+        } else if (strcmp(item->key, "path") == 0) {
+            sanitize_path(meta->path, sizeof(meta->path), item->value);
+        } else if (strcmp(item->key, "uri") == 0) {
+            const char *value = item->value;
+            const char *scheme_sep = strstr(value, "://");
+            if (scheme_sep && (size_t)(scheme_sep - value) < sizeof(meta->proto)) {
+                char proto[sizeof(meta->proto)] = {0};
+                size_t proto_len = (size_t)(scheme_sep - value);
+                memcpy(proto, value, proto_len);
+                proto[proto_len] = '\0';
+                if (is_token_valid(proto)) {
+                    strlcpy(meta->proto, proto, sizeof(meta->proto));
+                }
+                const char *path = strchr(scheme_sep + 3, '/');
+                if (path) {
+                    sanitize_path(meta->path, sizeof(meta->path), path);
+                }
+            }
+        } else if (strcmp(item->key, "host") == 0 || strcmp(item->key, "sni") == 0) {
+            if (strlen(item->value) < sizeof(meta->host)) {
+                strlcpy(meta->host, item->value, sizeof(meta->host));
+            }
+        }
+    }
+}
+
+static bool build_uri_from_result(const mdns_result_t *result, char *uri, size_t uri_len)
+{
+    if (!result || !uri || uri_len == 0) {
+        return false;
+    }
+    service_metadata_t meta;
+    service_metadata_init(&meta);
+    apply_txt_metadata(&meta, result);
+
+    if (strcmp(meta.proto, "wss") != 0 && strcmp(meta.proto, "ws") != 0) {
+        ESP_LOGW(TAG, "Skipping service with unsupported proto=%s", meta.proto);
+        return false;
+    }
+
+    const mdns_ip_addr_t *addr = result->addr;
+    while (addr) {
+        char ip[INET6_ADDRSTRLEN + 1] = {0};
+        char host[INET6_ADDRSTRLEN + 3] = {0};
+        if (addr->addr.type == IPADDR_TYPE_V6) {
+            ip6addr_ntoa_r(&addr->addr.u_addr.ip6, ip, sizeof(ip));
+            int written = snprintf(host, sizeof(host), "[%s]", ip);
+            if (written < 0 || (size_t)written >= sizeof(host)) {
+                addr = addr->next;
+                continue;
+            }
+        } else if (addr->addr.type == IPADDR_TYPE_V4) {
+            ip4addr_ntoa_r(&addr->addr.u_addr.ip4, ip, sizeof(ip));
+            strlcpy(host, ip, sizeof(host));
+        } else {
+            addr = addr->next;
+            continue;
+        }
+
+        int written = snprintf(uri, uri_len, "%s://%s:%u%s", meta.proto, host, result->port, meta.path);
+        if (written > 0 && (size_t)written < uri_len) {
+            if (meta.host[0]) {
+                set_discovered_server_name(meta.host);
+            } else if (result->hostname && result->hostname[0]) {
+                set_discovered_server_name(result->hostname);
+            } else {
+                set_discovered_server_name(NULL);
+            }
+            ESP_LOGI(TAG, "Discovered sensor endpoint %s", uri);
+            return true;
+        }
+        addr = addr->next;
+    }
+    return false;
+}
 
 static void handle_sensor_update(const uint8_t *data, size_t len, uint32_t crc)
 {
@@ -40,30 +291,38 @@ static void ws_rx(const uint8_t *data, size_t len, uint32_t crc, void *ctx)
 
 static bool discover_service(char *uri, size_t uri_len)
 {
+    set_discovered_server_name(NULL);
     esp_err_t err = mdns_init();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "mDNS init failed: %s", esp_err_to_name(err));
     }
-    for (int attempt = 0; attempt < 5; ++attempt) {
+    const uint32_t timeout_ms = CONFIG_HMI_DISCOVERY_TIMEOUT_MS;
+    const int64_t start = esp_timer_get_time() / 1000;
+    while (timeout_ms == 0 || (uint32_t)((esp_timer_get_time() / 1000) - start) < timeout_ms) {
         mdns_result_t *results = NULL;
         err = mdns_query_ptr("_hmi-sensor", "_tcp", 3000, 20, &results);
         if (err == ESP_OK && results) {
             mdns_result_t *r = results;
             while (r) {
-                if (r->addr) {
-                    char ip[64];
-                    if (r->addr->addr.type == IPADDR_TYPE_V4) {
-                        ip4addr_ntoa_r(&r->addr->addr.u_addr.ip4, ip, sizeof(ip));
-                        snprintf(uri, uri_len, "wss://%s:%u/ws", ip, r->port);
-                        mdns_query_results_free(results);
-                        return true;
-                    }
+                if (build_uri_from_result(r, uri, uri_len)) {
+                    store_cached_service(uri);
+                    mdns_query_results_free(results);
+                    return true;
                 }
                 r = r->next;
             }
             mdns_query_results_free(results);
         }
         vTaskDelay(pdMS_TO_TICKS(2000));
+        if (timeout_ms != 0) {
+            int64_t elapsed = (esp_timer_get_time() / 1000) - start;
+            if (elapsed >= timeout_ms) {
+                break;
+            }
+        }
+    }
+    if (load_cached_service(uri, uri_len)) {
+        return true;
     }
     return false;
 }
@@ -91,10 +350,17 @@ void hmi_ws_client_start(hmi_data_model_t *model)
     ESP_ERROR_CHECK(wifi_manager_start(&wifi_cfg));
 
     char uri[128];
+    const char *fallback_host = NULL;
     if (!discover_service(uri, sizeof(uri))) {
         snprintf(uri, sizeof(uri), "wss://%s:%u/ws", CONFIG_HMI_SENSOR_HOSTNAME, CONFIG_HMI_SENSOR_PORT);
+        set_discovered_server_name(CONFIG_HMI_SENSOR_HOSTNAME);
+        fallback_host = CONFIG_HMI_SENSOR_HOSTNAME;
     }
+    const char *tls_server_name = select_tls_server_name(fallback_host);
     ESP_LOGI(TAG, "Connecting to %s", uri);
+    if (tls_server_name) {
+        ESP_LOGI(TAG, "Using TLS server name %s", tls_server_name);
+    }
     size_t ca_len = 0;
     const uint8_t *ca = cert_store_ca_cert(&ca_len);
     ws_client_config_t cfg = {
@@ -105,6 +371,7 @@ void hmi_ws_client_start(hmi_data_model_t *model)
         .skip_common_name_check = false,
         .reconnect_min_delay_ms = 2000,
         .reconnect_max_delay_ms = 60000,
+        .tls_server_name = tls_server_name,
     };
     esp_err_t start_err = ws_client_start(&cfg, ws_rx, NULL);
     if (start_err != ESP_OK) {

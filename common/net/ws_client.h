@@ -19,6 +19,7 @@ typedef struct {
     bool skip_common_name_check;
     uint32_t reconnect_min_delay_ms;
     uint32_t reconnect_max_delay_ms;
+    const char *tls_server_name;
 } ws_client_config_t;
 
 typedef struct {
