@@ -23,6 +23,10 @@ typedef struct {
     const char *tls_server_name;
     ws_client_error_cb_t error_cb;
     void *error_ctx;
+    const uint8_t *crypto_secret;
+    size_t crypto_secret_len;
+    bool enable_frame_encryption;
+    bool enable_handshake_token;
 } ws_client_config_t;
 
 typedef struct {

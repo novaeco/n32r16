@@ -102,7 +102,9 @@ pipeline de tests unitaires/coverage et génération automatique de documentatio
    pytest tests/e2e
    ```
 3. Le banc simule les WebSockets `common/net` (provisionnement, CRC, commandes IO) et valide l'échange `sensor_node` ↔ `hmi_node` sans matériel.
-4. Archiver le rapport `pytest` (`.github/workflows/ci.yml`) dans la CI pour tracer les régressions d'intégration protocolaire.
+4. Ajoutez l'étape `pytest tests/e2e/test_ws_handshake_vectors.py` à vos pipelines pour fixer les vecteurs HMAC/AES utilisés par
+   `common/net/ws_security`.
+5. Archiver le rapport `pytest` (`.github/workflows/ci.yml`) dans la CI pour tracer les régressions d'intégration protocolaire.
 
 ## 4. Documentation automatisée (Doxygen)
 

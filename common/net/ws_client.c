@@ -2,6 +2,9 @@
 
 #include "esp_idf_version.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "ws_security.h"
+#include "base64_utils.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +23,79 @@ static TimerHandle_t s_reconnect_timer;
 static uint32_t s_reconnect_delay_ms;
 static uint32_t s_reconnect_min_ms;
 static uint32_t s_reconnect_max_ms;
-static char *s_auth_header;
+static char *s_header_block;
+static ws_security_context_t s_security_ctx;
+static uint64_t s_rx_counter;
+static const char *s_token_ref;
+static size_t s_header_len;
+static bool s_handshake_enabled;
+
+static void bytes_to_hex(const uint8_t *in, size_t len, char *out)
+{
+    static const char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < len; ++i) {
+        out[2U * i] = hex[in[i] >> 4U];
+        out[2U * i + 1U] = hex[in[i] & 0x0FU];
+    }
+    out[2U * len] = '\0';
+}
+
+static esp_err_t regenerate_headers(void)
+{
+    if (s_header_len == 0) {
+        return ESP_OK;
+    }
+    if (!s_header_block) {
+        s_header_block = (char *)malloc(s_header_len + 1U);
+        if (!s_header_block) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    size_t offset = 0;
+    const char *token = s_token_ref ? s_token_ref : "";
+    if (token[0] != '\0') {
+        int written = snprintf(s_header_block + offset, s_header_len - offset + 1U, "Authorization: Bearer %s\r\n",
+                               token);
+        if (written < 0 || (size_t)written > s_header_len - offset) {
+            return ESP_ERR_INVALID_SIZE;
+        }
+        offset += (size_t)written;
+    }
+    if (s_handshake_enabled) {
+        uint8_t nonce[WS_SECURITY_NONCE_LEN];
+        char nonce_hex[WS_SECURITY_NONCE_LEN * 2U + 1U];
+        uint8_t signature[32];
+        char signature_b64[96];
+        size_t signature_b64_len = 0;
+        esp_fill_random(nonce, sizeof(nonce));
+        bytes_to_hex(nonce, sizeof(nonce), nonce_hex);
+        esp_err_t sig_err = ws_security_compute_handshake_signature(&s_security_ctx, nonce, sizeof(nonce), token,
+                                                                    signature, sizeof(signature));
+        if (sig_err != ESP_OK) {
+            return sig_err;
+        }
+        esp_err_t enc_err = base64_utils_encode(signature, sizeof(signature), signature_b64, sizeof(signature_b64),
+                                                &signature_b64_len);
+        if (enc_err != ESP_OK) {
+            return enc_err;
+        }
+        int written = snprintf(s_header_block + offset, s_header_len - offset + 1U, "X-WS-Nonce: %s\r\n", nonce_hex);
+        if (written < 0 || (size_t)written > s_header_len - offset) {
+            return ESP_ERR_INVALID_SIZE;
+        }
+        offset += (size_t)written;
+        written = snprintf(s_header_block + offset, s_header_len - offset + 1U, "X-WS-Signature: %s\r\n",
+                           signature_b64);
+        if (written < 0 || (size_t)written > s_header_len - offset) {
+            return ESP_ERR_INVALID_SIZE;
+        }
+        offset += (size_t)written;
+    }
+    if (offset <= s_header_len) {
+        s_header_block[offset] = '\0';
+    }
+    return ESP_OK;
+}
 
 /**
  * @brief Default platform hook to create a WebSocket client handle.
@@ -209,6 +284,8 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
         s_connected = true;
         s_reconnect_delay_ms = s_reconnect_min_ms;
         ESP_LOGI(TAG, "Connected to %s", s_platform->client_get_uri(s_client));
+        ws_security_reset_counters(&s_security_ctx);
+        s_rx_counter = 0;
         break;
     case WEBSOCKET_EVENT_DISCONNECTED:
         s_connected = false;
@@ -229,8 +306,17 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
     case WEBSOCKET_EVENT_DATA:
         if (s_rx_cb && data->payload_len > 0) {
             uint32_t crc32 = 0;
-            const uint8_t *payload = (const uint8_t *)data->data_ptr;
+            uint8_t *payload = (uint8_t *)data->data_ptr;
             size_t len = data->payload_len;
+            if (ws_security_is_encryption_enabled(&s_security_ctx) && data->op_code == WS_TRANSPORT_OPCODES_BINARY) {
+                size_t plaintext_len = 0;
+                esp_err_t dec_err = ws_security_decrypt(&s_security_ctx, payload, len, &plaintext_len, &s_rx_counter);
+                if (dec_err != ESP_OK) {
+                    ESP_LOGW(TAG, "Failed to decrypt frame: %s", esp_err_to_name(dec_err));
+                    break;
+                }
+                len = plaintext_len;
+            }
             if (data->op_code == WS_TRANSPORT_OPCODES_BINARY && len >= sizeof(uint32_t)) {
                 crc32 = ((const uint32_t *)payload)[0];
                 payload += sizeof(uint32_t);
@@ -260,6 +346,13 @@ static void reconnect_timer_cb(TimerHandle_t timer)
     (void)timer;
     if (s_client && s_should_run) {
         ESP_LOGI(TAG, "Reconnecting WebSocket");
+        if (s_header_len > 0U) {
+            esp_err_t err = regenerate_headers();
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to rebuild handshake headers: %s", esp_err_to_name(err));
+                return;
+            }
+        }
         s_platform->client_start(s_client);
     }
 }
@@ -281,13 +374,18 @@ static void cleanup_client(void)
         s_platform->client_destroy(s_client);
         s_client = NULL;
     }
-    free(s_auth_header);
-    s_auth_header = NULL;
+    free(s_header_block);
+    s_header_block = NULL;
     s_rx_cb = NULL;
     s_rx_ctx = NULL;
     s_error_cb = NULL;
     s_error_ctx = NULL;
     s_connected = false;
+    s_rx_counter = 0;
+    memset(&s_security_ctx, 0, sizeof(s_security_ctx));
+    s_token_ref = NULL;
+    s_header_len = 0;
+    s_handshake_enabled = false;
 }
 
 /**
@@ -307,6 +405,19 @@ esp_err_t ws_client_start(const ws_client_config_t *config, ws_client_rx_cb_t cb
         return ESP_ERR_INVALID_STATE;
     }
 
+    ws_security_config_t sec_cfg = {
+        .secret = config->crypto_secret,
+        .secret_len = config->crypto_secret_len,
+        .enable_encryption = config->enable_frame_encryption,
+        .enable_handshake = config->enable_handshake_token,
+    };
+    esp_err_t sec_err = ws_security_context_init(&s_security_ctx, &sec_cfg);
+    if (sec_err != ESP_OK) {
+        return sec_err;
+    }
+    ws_security_reset_counters(&s_security_ctx);
+    s_rx_counter = 0;
+
     esp_websocket_client_config_t ws_cfg = {
         .uri = config->uri,
         .cert_pem = (const char *)config->ca_cert,
@@ -321,27 +432,34 @@ esp_err_t ws_client_start(const ws_client_config_t *config, ws_client_rx_cb_t cb
 #endif
     }
 
-    if (config->auth_token) {
-        static const char prefix[] = "Authorization: Bearer ";
-        const size_t token_len = strlen(config->auth_token);
-        const size_t header_len = sizeof(prefix) - 1U + token_len + 2U; // CRLF
-        s_auth_header = (char *)malloc(header_len + 1U);
-        if (!s_auth_header) {
-            return ESP_ERR_NO_MEM;
+    const char *token = config->auth_token ? config->auth_token : "";
+    const bool have_token = token[0] != '\0';
+    s_handshake_enabled = ws_security_is_handshake_enabled(&s_security_ctx);
+    size_t header_len = 0;
+    if (have_token) {
+        header_len += strlen("Authorization: Bearer ") + strlen(token) + 2U;
+    }
+    if (s_handshake_enabled) {
+        header_len += strlen("X-WS-Nonce: ") + (WS_SECURITY_NONCE_LEN * 2U) + 2U;
+        header_len += strlen("X-WS-Signature: ") + 44U + 2U;
+    }
+    s_token_ref = token;
+    s_header_len = header_len;
+    if (header_len > 0U) {
+        esp_err_t hdr_err = regenerate_headers();
+        if (hdr_err != ESP_OK) {
+            free(s_header_block);
+            s_header_block = NULL;
+            s_header_len = 0;
+            return hdr_err;
         }
-        int written = snprintf(s_auth_header, header_len + 1U, "%s%s\r\n", prefix, config->auth_token);
-        if (written < 0 || (size_t)written >= header_len + 1U) {
-            free(s_auth_header);
-            s_auth_header = NULL;
-            return ESP_ERR_INVALID_SIZE;
-        }
-        ws_cfg.headers = s_auth_header;
+        ws_cfg.headers = s_header_block;
     }
 
     s_client = s_platform->client_init(&ws_cfg);
     if (!s_client) {
-        free(s_auth_header);
-        s_auth_header = NULL;
+        free(s_header_block);
+        s_header_block = NULL;
         return ESP_ERR_NO_MEM;
     }
 
@@ -401,7 +519,24 @@ esp_err_t ws_client_send(const uint8_t *data, size_t len)
     if (!s_client || !s_connected) {
         return ESP_ERR_INVALID_STATE;
     }
-    int sent = s_platform->client_send_bin(s_client, (const char *)data, len, portMAX_DELAY);
+    const uint8_t *frame_data = data;
+    size_t frame_len = len;
+    uint8_t *encrypted = NULL;
+    if (ws_security_is_encryption_enabled(&s_security_ctx)) {
+        size_t required = ws_security_encrypted_size(&s_security_ctx, len);
+        encrypted = (uint8_t *)malloc(required);
+        if (!encrypted) {
+            return ESP_ERR_NO_MEM;
+        }
+        esp_err_t enc_err = ws_security_encrypt(&s_security_ctx, data, len, encrypted, required, &frame_len);
+        if (enc_err != ESP_OK) {
+            free(encrypted);
+            return enc_err;
+        }
+        frame_data = encrypted;
+    }
+    int sent = s_platform->client_send_bin(s_client, (const char *)frame_data, frame_len, portMAX_DELAY);
+    free(encrypted);
     return sent >= 0 ? ESP_OK : ESP_FAIL;
 }
 

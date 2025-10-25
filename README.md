@@ -52,6 +52,7 @@ Firmware for a two-node ESP32-S3 platform delivering real-time sensor acquisitio
 - **Clang-Tidy** – After running `idf.py build` (to generate `build/compile_commands.json`), execute
   `clang-tidy -p build $(git ls-files '*.c')` from the corresponding project directory.
 - **Unit Tests** – Execute `idf.py -T` to run the protocol and driver unit tests when relevant changes are made.
+- **Tests E2E sécurité** – Valider la dérivation des clés WebSocket et les vecteurs HMAC via `pytest tests/e2e/test_ws_handshake_vectors.py`.
 
 ## Quick Start
 
@@ -85,6 +86,31 @@ Replace `/dev/ttyUSBx` with your serial device.
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
+> 📎 En cas d'échec TLS lors de `./install.sh`, consultez la section « Dépannage des téléchargements ESP-IDF » du
+> [guide d'installation](documentations/installation_guide.md#d%C3%A9pannage-des-t%C3%A9l%C3%A9chargements-esp-idf-erreurs-tlsca).
+
+## Target Profiles
+
+The repository ships tuned configuration overlays for memory-constrained ESP32 variants. Combine them with the default
+`sdkconfig.defaults` via the `SDKCONFIG_DEFAULTS` CMake option:
+
+| Module           | Flash size | PSRAM | Overlay                                      |
+|------------------|------------|-------|----------------------------------------------|
+| ESP32-S3         | 32 MB OPI  | 16 MB | _default_ (no overlay required)              |
+| ESP32-S2-WROVER  | 8 MB QIO   | 2 MB  | `configs/esp32s2/sdkconfig.defaults`         |
+| ESP32-C3 modules | 4 MB DIO   | —     | `configs/esp32c3/sdkconfig.defaults`         |
+
+Example for the sensor node on ESP32-S2:
+
+```bash
+idf.py set-target esp32s2 \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;configs/esp32s2/sdkconfig.defaults" build
+```
+
+The overlays adjust flash geometry, CPU frequency, and partition tables (`partitions/esp32s2_8MB.csv`,
+`partitions/esp32c3_4MB.csv`) to maintain OTA headroom while honouring the reduced memory footprint. The default Wi-Fi and
+provisioning credentials remain identical across profiles to ease mixed deployments.
+
 ### Sensor Node Kconfig Highlights
 
 - **Ambient sensor type** (`CONFIG_SENSOR_AMBIENT_SENSOR_*`) toggles between the legacy dual SHT20 stack and the Bosch BME280 backend with full calibration handling.
@@ -104,6 +130,13 @@ idf.py -p /dev/ttyUSB0 flash monitor
   embedded by `components/cert_store`. Clients must present the bearer token configured in `CONFIG_SENSOR_WS_AUTH_TOKEN`. The HMI
   node validates the server certificate against the CA bundle supplied by `cert_store` and injects its own bearer token via
   `CONFIG_HMI_WS_AUTH_TOKEN`.
+- **HMAC handshake hardening** – Optional second-factor authentication adds per-connection nonces (`X-WS-Nonce`) signed via
+  `X-WS-Signature`. Enable `CONFIG_SENSOR_WS_ENABLE_HANDSHAKE` / `CONFIG_HMI_WS_ENABLE_HANDSHAKE` and populate
+  `CONFIG_SENSOR_WS_CRYPTO_SECRET_BASE64` / `CONFIG_HMI_WS_CRYPTO_SECRET_BASE64`. Replay detection is governed by
+  `CONFIG_SENSOR_WS_HANDSHAKE_TTL_MS` and `CONFIG_SENSOR_WS_HANDSHAKE_CACHE_SIZE`.
+- **AES-GCM payload confidentiality** – Activate `CONFIG_SENSOR_WS_ENABLE_ENCRYPTION` and `CONFIG_HMI_WS_ENABLE_ENCRYPTION` to
+  wrap CRC-framed telemetry/command payloads in 256-bit AES-GCM envelopes. Ciphertext length expands by
+  `WS_SECURITY_HEADER_LEN + WS_SECURITY_TAG_LEN` (28 bytes) relative to the plaintext frame.
 - **Service discovery** – mDNS advertising remains on `_hmi-sensor._tcp` but the HMI now consumes TXT metadata (`proto`,
   `path`, optional `host`/`sni`) and IPv6 A/AAAA answers to build the WebSocket URI. Successful discoveries persist the URI/SNI
   pair in encrypted NVS with an expiry governed by `CONFIG_HMI_DISCOVERY_CACHE_TTL_MINUTES`, so stale endpoints are purged
@@ -121,6 +154,9 @@ idf.py -p /dev/ttyUSB0 flash monitor
   manifest URLs have been replaced. Toggle `CONFIG_SENSOR_ALLOW_PLACEHOLDER_SECRETS` / `CONFIG_HMI_ALLOW_PLACEHOLDER_SECRETS`
   temporarily when developing with placeholders, otherwise update the string options under *Sensor Node Options* and *HMI Node
   Options*. Runtime assertions also guard against trivially short secrets.
+- **Replay-resistant WebSocket handshakes** – When handshake HMAC is enabled the sensor caches recent nonces for
+  `CONFIG_SENSOR_WS_HANDSHAKE_TTL_MS` and refuses duplicates, enforcing forward secrecy across reconnect attempts. The HMI client
+  regenerates nonce/signature pairs on every reconnect via `regenerate_headers()`.
 - **Certificate overrides** – `components/cert_store` first searches for PEM blobs in NVS (`CONFIG_CERT_STORE_OVERRIDE_FROM_NVS`)
   and then in a SPIFFS partition (`CONFIG_CERT_STORE_OVERRIDE_FROM_SPIFFS`). When no override is found the compiled-in assets in
   `components/cert_store/certs/` are used. The shared partition table defines the SPIFFS partition `storage` at offset
@@ -160,6 +196,12 @@ idf.py -p /dev/ttyUSB0 flash monitor
    ```bash
    esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 460800 write_flash 0xB000 cert_store_nvs.bin
    ```
+
+## Demonstrations
+
+Annotated UI walkthroughs and wiring diagrams live in `documentations/hardware/board_profiles.md`. To capture a fresh demo, the
+workflow described in `documentations/demo_capture.md` explains how to grab LVGL frame buffers (`tools/lvgl_snapshot.py`) and
+record synchronized WebSocket traffic using OBS/FFmpeg.
 
 ### Provisioning new PEM blobs via SPIFFS
 

@@ -3,6 +3,7 @@
 #include "unity.h"
 #include <string.h>
 #include "esp_idf_version.h"
+#include "ws_security.h"
 
 typedef struct {
     TimerCallbackFunction_t cb;
@@ -181,6 +182,7 @@ static void reset_state(void)
     s_last_rx_len = 0;
     s_last_rx_crc = 0;
     s_rx_calls = 0;
+    s_last_send_len = 0;
 }
 
 void setUp(void)
@@ -299,6 +301,77 @@ TEST_CASE("ws client send validates connection state", "[net][ws]")
     TEST_ASSERT_TRUE(ws_client_is_connected());
     TEST_ASSERT_EQUAL(ESP_OK, ws_client_send(payload, sizeof(payload)));
     TEST_ASSERT_EQUAL_SIZE_T(sizeof(payload), s_last_send_len);
+}
+
+TEST_CASE("ws client regenerates handshake headers on reconnect", "[net][ws]")
+{
+    static const uint8_t secret[32] = {
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
+        0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE,
+        0x0F, 0x1E, 0x2D, 0x3C, 0x4B, 0x5A, 0x69, 0x78,
+        0x87, 0x96, 0xA5, 0xB4, 0xC3, 0xD2, 0xE1, 0xF0,
+    };
+    ws_client_config_t cfg = {
+        .uri = "wss://secure",
+        .auth_token = "handshake-token",
+        .crypto_secret = secret,
+        .crypto_secret_len = sizeof(secret),
+        .enable_handshake_token = true,
+        .reconnect_min_delay_ms = 100,
+        .reconnect_max_delay_ms = 100,
+    };
+
+    TEST_ASSERT_EQUAL(ESP_OK, ws_client_start(&cfg, NULL, NULL));
+    TEST_ASSERT_NOT_NULL(s_last_config.headers);
+    TEST_ASSERT_NOT_NULL(strstr(s_last_config.headers, "Authorization: Bearer handshake-token"));
+    TEST_ASSERT_NOT_NULL(strstr(s_last_config.headers, "X-WS-Nonce"));
+    TEST_ASSERT_NOT_NULL(strstr(s_last_config.headers, "X-WS-Signature"));
+
+    char header_snapshot[256];
+    strncpy(header_snapshot, s_last_config.headers, sizeof(header_snapshot));
+    header_snapshot[sizeof(header_snapshot) - 1U] = '\0';
+
+    esp_websocket_event_data_t evt = {
+        .data_ptr = NULL,
+        .payload_len = 0,
+        .op_code = WS_TRANSPORT_OPCODES_BINARY,
+    };
+    s_event_handler(s_event_ctx, WEBSOCKET_EVENT_DISCONNECTED, &evt);
+    TEST_ASSERT_NOT_NULL(s_timer.cb);
+    s_timer.cb(&s_timer);
+    TEST_ASSERT_EQUAL(2, s_client_start_calls);
+    TEST_ASSERT_NOT_NULL(s_last_config.headers);
+    TEST_ASSERT_NOT_EQUAL(0, strcmp(header_snapshot, s_last_config.headers));
+}
+
+TEST_CASE("ws client encrypts outbound payloads when enabled", "[net][ws]")
+{
+    static const uint8_t secret[32] = {
+        0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22,
+        0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00,
+        0x0A, 0x1B, 0x2C, 0x3D, 0x4E, 0x5F, 0x60, 0x71,
+        0x82, 0x93, 0xA4, 0xB5, 0xC6, 0xD7, 0xE8, 0xF9,
+    };
+    ws_client_config_t cfg = {
+        .uri = "wss://cipher",
+        .crypto_secret = secret,
+        .crypto_secret_len = sizeof(secret),
+        .enable_frame_encryption = true,
+    };
+
+    TEST_ASSERT_EQUAL(ESP_OK, ws_client_start(&cfg, capture_rx, NULL));
+    TEST_ASSERT_NULL(s_last_config.headers);
+
+    esp_websocket_event_data_t evt = {
+        .data_ptr = NULL,
+        .payload_len = 0,
+        .op_code = WS_TRANSPORT_OPCODES_BINARY,
+    };
+    s_event_handler(s_event_ctx, WEBSOCKET_EVENT_CONNECTED, &evt);
+    uint8_t payload[] = {0x10, 0x20, 0x30};
+    TEST_ASSERT_EQUAL(ESP_OK, ws_client_send(payload, sizeof(payload)));
+    size_t expected = WS_SECURITY_HEADER_LEN + sizeof(payload) + WS_SECURITY_TAG_LEN;
+    TEST_ASSERT_EQUAL_SIZE_T(expected, s_last_send_len);
 }
 
 TEST_CASE("ws client applies TLS server name override", "[net][ws]")
