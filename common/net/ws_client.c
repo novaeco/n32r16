@@ -19,64 +19,151 @@ static uint32_t s_reconnect_min_ms;
 static uint32_t s_reconnect_max_ms;
 static char *s_auth_header;
 
+/**
+ * @brief Default platform hook to create a WebSocket client handle.
+ *
+ * @param config Pointer to the client configuration structure.
+ * @return Handle to the initialized client or NULL on failure.
+ */
 static esp_websocket_client_handle_t client_init_default(const esp_websocket_client_config_t *config)
 {
     return esp_websocket_client_init(config);
 }
 
+/**
+ * @brief Default platform hook to start a WebSocket client connection.
+ *
+ * @param client Client handle returned from initialization.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t client_start_default(esp_websocket_client_handle_t client)
 {
     return esp_websocket_client_start(client);
 }
 
+/**
+ * @brief Default platform hook to stop an active WebSocket connection.
+ *
+ * @param client Client handle to stop.
+ * @return ESP_OK on success or an error code.
+ */
 static esp_err_t client_stop_default(esp_websocket_client_handle_t client)
 {
     return esp_websocket_client_stop(client);
 }
 
+/**
+ * @brief Default platform hook to destroy a WebSocket client handle.
+ *
+ * @param client Client handle to destroy.
+ * @return void
+ */
 static void client_destroy_default(esp_websocket_client_handle_t client)
 {
     esp_websocket_client_destroy(client);
 }
 
+/**
+ * @brief Default platform hook to query the active client URI.
+ *
+ * @param client Client handle.
+ * @return Pointer to the URI string.
+ */
 static const char *client_get_uri_default(esp_websocket_client_handle_t client)
 {
     return esp_websocket_client_get_uri(client);
 }
 
+/**
+ * @brief Default platform hook to send binary data on the WebSocket.
+ *
+ * @param client Client handle.
+ * @param data Pointer to the data buffer.
+ * @param len Number of bytes to transmit.
+ * @param timeout Maximum wait time in RTOS ticks.
+ * @return Number of bytes sent or negative on error.
+ */
 static int client_send_bin_default(esp_websocket_client_handle_t client, const char *data, size_t len,
                                    TickType_t timeout)
 {
     return esp_websocket_client_send_bin(client, data, len, timeout);
 }
 
+/**
+ * @brief Default platform hook to register a WebSocket event handler.
+ *
+ * @param client Client handle.
+ * @param event Event identifier to subscribe.
+ * @param handler Callback invoked on event.
+ * @param handler_args Context pointer passed to the callback.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t register_events_default(esp_websocket_client_handle_t client, esp_websocket_event_id_t event,
                                          esp_event_handler_t handler, void *handler_args)
 {
     return esp_websocket_register_events(client, event, handler, handler_args);
 }
 
+/**
+ * @brief Default platform hook to create a FreeRTOS timer.
+ *
+ * @param name Timer name.
+ * @param period Timer period in ticks.
+ * @param auto_reload Auto-reload flag.
+ * @param timer_id User context pointer.
+ * @param callback Function invoked when the timer expires.
+ * @return Handle to the created timer or NULL on failure.
+ */
 static TimerHandle_t timer_create_default(const char *name, TickType_t period, UBaseType_t auto_reload,
                                          void *timer_id, TimerCallbackFunction_t callback)
 {
     return xTimerCreate(name, period, auto_reload, timer_id, callback);
 }
 
+/**
+ * @brief Default platform hook to start a FreeRTOS timer.
+ *
+ * @param timer Timer handle.
+ * @param ticks_to_wait Maximum block time to start the timer.
+ * @return pdPASS on success or pdFAIL on error.
+ */
 static BaseType_t timer_start_default(TimerHandle_t timer, TickType_t ticks_to_wait)
 {
     return xTimerStart(timer, ticks_to_wait);
 }
 
+/**
+ * @brief Default platform hook to stop a FreeRTOS timer.
+ *
+ * @param timer Timer handle.
+ * @param ticks_to_wait Maximum block time to stop the timer.
+ * @return pdPASS on success or pdFAIL on error.
+ */
 static BaseType_t timer_stop_default(TimerHandle_t timer, TickType_t ticks_to_wait)
 {
     return xTimerStop(timer, ticks_to_wait);
 }
 
+/**
+ * @brief Default platform hook to delete a FreeRTOS timer.
+ *
+ * @param timer Timer handle.
+ * @param ticks_to_wait Maximum block time to delete the timer.
+ * @return pdPASS on success or pdFAIL on error.
+ */
 static BaseType_t timer_delete_default(TimerHandle_t timer, TickType_t ticks_to_wait)
 {
     return xTimerDelete(timer, ticks_to_wait);
 }
 
+/**
+ * @brief Default platform hook to adjust a FreeRTOS timer period.
+ *
+ * @param timer Timer handle.
+ * @param new_period Updated period in ticks.
+ * @param ticks_to_wait Maximum block time to apply the change.
+ * @return pdPASS on success or pdFAIL on error.
+ */
 static BaseType_t timer_change_period_default(TimerHandle_t timer, TickType_t new_period, TickType_t ticks_to_wait)
 {
     return xTimerChangePeriod(timer, new_period, ticks_to_wait);
@@ -99,6 +186,15 @@ static const ws_client_platform_t s_default_platform = {
 
 static const ws_client_platform_t *s_platform = &s_default_platform;
 
+/**
+ * @brief Handle WebSocket client events and manage reconnection logic.
+ *
+ * @param handler_args User context (unused).
+ * @param base Event base identifier.
+ * @param event_id Event identifier.
+ * @param event_data Pointer to event-specific data.
+ * @return void
+ */
 static void websocket_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id,
                                     void *event_data)
 {
@@ -145,6 +241,12 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
     }
 }
 
+/**
+ * @brief Timer callback that restarts the WebSocket connection.
+ *
+ * @param timer Timer handle invoking the callback.
+ * @return void
+ */
 static void reconnect_timer_cb(TimerHandle_t timer)
 {
     (void)timer;
@@ -154,6 +256,11 @@ static void reconnect_timer_cb(TimerHandle_t timer)
     }
 }
 
+/**
+ * @brief Stop and destroy the active WebSocket client and timers.
+ *
+ * @return void
+ */
 static void cleanup_client(void)
 {
     if (s_reconnect_timer) {
@@ -173,6 +280,14 @@ static void cleanup_client(void)
     s_connected = false;
 }
 
+/**
+ * @brief Initialize and start the WebSocket client with reconnection support.
+ *
+ * @param config Pointer to the client configuration structure.
+ * @param cb Receive callback invoked for incoming payloads.
+ * @param ctx User context passed to the receive callback.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 esp_err_t ws_client_start(const ws_client_config_t *config, ws_client_rx_cb_t cb, void *ctx)
 {
     if (!config || !config->uri) {
@@ -244,12 +359,24 @@ esp_err_t ws_client_start(const ws_client_config_t *config, ws_client_rx_cb_t cb
 }
 
 
+/**
+ * @brief Stop the WebSocket client and release resources.
+ *
+ * @return void
+ */
 void ws_client_stop(void)
 {
     s_should_run = false;
     cleanup_client();
 }
 
+/**
+ * @brief Send a binary payload through the active WebSocket connection.
+ *
+ * @param data Pointer to the payload buffer.
+ * @param len Payload size in bytes.
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 esp_err_t ws_client_send(const uint8_t *data, size_t len)
 {
     if (!s_client || !s_connected) {
@@ -259,11 +386,22 @@ esp_err_t ws_client_send(const uint8_t *data, size_t len)
     return sent >= 0 ? ESP_OK : ESP_FAIL;
 }
 
+/**
+ * @brief Retrieve the current WebSocket connection status.
+ *
+ * @return true when connected to the server, false otherwise.
+ */
 bool ws_client_is_connected(void)
 {
     return s_connected;
 }
 
+/**
+ * @brief Override the WebSocket client platform hooks.
+ *
+ * @param platform Pointer to the platform definition (NULL for defaults).
+ * @return void
+ */
 void ws_client_set_platform(const ws_client_platform_t *platform)
 {
     s_platform = platform ? platform : &s_default_platform;

@@ -37,6 +37,12 @@ static sensor_data_model_t *s_model;
 static uint16_t s_pwm[16];
 static uint16_t s_pwm_freq = 500;
 
+/**
+ * @brief FreeRTOS task that owns the IO expanders and PWM controller.
+ *
+ * @param arg Unused task argument.
+ * @return void
+ */
 static void io_task(void *arg)
 {
     (void)arg;
@@ -87,6 +93,12 @@ static void io_task(void *arg)
     }
 }
 
+/**
+ * @brief Launch the IO management task and initialize shared state.
+ *
+ * @param model Data model instance to update with IO telemetry.
+ * @return void
+ */
 void io_task_start(sensor_data_model_t *model)
 {
     s_model = model;
@@ -95,6 +107,13 @@ void io_task_start(sensor_data_model_t *model)
     xTaskCreatePinnedToCore(io_task, "t_io", 4096, NULL, 5, NULL, 1);
 }
 
+/**
+ * @brief Queue a PWM duty cycle update for a given channel.
+ *
+ * @param channel PCA9685 channel index.
+ * @param duty 12-bit duty cycle value.
+ * @return true if the command was enqueued, false otherwise.
+ */
 bool io_task_set_pwm(uint8_t channel, uint16_t duty)
 {
     io_command_t cmd = {
@@ -107,6 +126,12 @@ bool io_task_set_pwm(uint8_t channel, uint16_t duty)
     return xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(20)) == pdPASS;
 }
 
+/**
+ * @brief Request a new PWM carrier frequency.
+ *
+ * @param frequency_hz Desired PWM frequency in hertz.
+ * @return true when the request is queued successfully, false otherwise.
+ */
 bool io_task_set_pwm_frequency(uint16_t frequency_hz)
 {
     io_command_t cmd = {
@@ -116,6 +141,15 @@ bool io_task_set_pwm_frequency(uint16_t frequency_hz)
     return xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(20)) == pdPASS;
 }
 
+/**
+ * @brief Enqueue a GPIO write to one of the MCP23017 expanders.
+ *
+ * @param device_index Target MCP23017 device index.
+ * @param port GPIO port selector (0 for A, 1 for B).
+ * @param mask Bit mask specifying affected pins.
+ * @param value Bit values to apply where the mask is set.
+ * @return true if the request was scheduled, false otherwise.
+ */
 bool io_task_write_gpio(uint8_t device_index, uint8_t port, uint16_t mask, uint16_t value)
 {
     io_command_t cmd = {

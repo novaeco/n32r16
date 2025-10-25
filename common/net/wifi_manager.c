@@ -28,6 +28,12 @@ static TimerHandle_t s_reconnect_timer;
 static uint32_t s_backoff_ms = 1000;
 static bool s_force_reprovision;
 
+/**
+ * @brief Timer callback that retries Wi-Fi connection after a backoff delay.
+ *
+ * @param timer Handle of the FreeRTOS timer invoking the callback.
+ * @return void
+ */
 static void reconnect_timer_cb(TimerHandle_t timer)
 {
     (void)timer;
@@ -35,6 +41,15 @@ static void reconnect_timer_cb(TimerHandle_t timer)
     esp_wifi_connect();
 }
 
+/**
+ * @brief Handle Wi-Fi and IP events to maintain STA connectivity state.
+ *
+ * @param arg User context (unused).
+ * @param event_base Event base identifier (WIFI_EVENT or IP_EVENT).
+ * @param event_id Event identifier within the base.
+ * @param event_data Pointer to event-specific data.
+ * @return void
+ */
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     (void)arg;
@@ -61,6 +76,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     }
 }
 
+/**
+ * @brief Process provisioning manager events for logging and synchronization.
+ *
+ * @param user_data Optional user context (unused).
+ * @param event Provisioning event identifier.
+ * @param event_data Event-specific payload.
+ * @return void
+ */
 static void provisioning_event_handler(void *user_data, wifi_prov_cb_event_t event, void *event_data)
 {
     (void)user_data;
@@ -88,6 +111,11 @@ static void provisioning_event_handler(void *user_data, wifi_prov_cb_event_t eve
     }
 }
 
+/**
+ * @brief Initialize the secure NVS storage required by Wi-Fi provisioning.
+ *
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t init_nvs_secure(void)
 {
     nvs_sec_cfg_t cfg = {0};
@@ -106,6 +134,11 @@ static esp_err_t init_nvs_secure(void)
     return nvs_flash_secure_set_flash(&cfg);
 }
 
+/**
+ * @brief Lazily initialize the ESP-NETIF and default Wi-Fi STA stack.
+ *
+ * @return ESP_OK on success or an ESP-IDF error code.
+ */
 static esp_err_t ensure_netif(void)
 {
     static bool initialized = false;
@@ -118,6 +151,14 @@ static esp_err_t ensure_netif(void)
     return ESP_OK;
 }
 
+/**
+ * @brief Compose the provisioning service name based on the device MAC address.
+ *
+ * @param config Wi-Fi manager configuration structure.
+ * @param out Output buffer receiving the formatted service name.
+ * @param len Length of the output buffer in bytes.
+ * @return void
+ */
 static void format_service_name(const wifi_manager_config_t *config, char *out, size_t len)
 {
     uint8_t mac[6] = {0};
@@ -126,6 +167,12 @@ static void format_service_name(const wifi_manager_config_t *config, char *out, 
              mac[3], mac[4], mac[5]);
 }
 
+/**
+ * @brief Start Wi-Fi provisioning if required and connect to the configured network.
+ *
+ * @param config Pointer to the Wi-Fi manager configuration.
+ * @return ESP_OK when the station is connected, otherwise an error code.
+ */
 esp_err_t wifi_manager_start(const wifi_manager_config_t *config)
 {
     if (!config) {
@@ -212,11 +259,21 @@ esp_err_t wifi_manager_start(const wifi_manager_config_t *config)
     return ESP_OK;
 }
 
+/**
+ * @brief Query the current Wi-Fi station connection status.
+ *
+ * @return true if connected to an access point, false otherwise.
+ */
 bool wifi_manager_is_connected(void)
 {
     return s_connected;
 }
 
+/**
+ * @brief Force reprovisioning on the next Wi-Fi manager startup.
+ *
+ * @return void
+ */
 void wifi_manager_request_reprovision(void)
 {
     s_force_reprovision = true;

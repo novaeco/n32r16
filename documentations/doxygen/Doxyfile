@@ -41,7 +41,6 @@ STRIP_FROM_PATH        = ../../
 
 HAVE_DOT               = YES
 DOT_IMAGE_FORMAT       = svg
-DOT_TRANSPARENT        = YES
 DOT_MULTI_TARGETS      = YES
 CALL_GRAPH             = YES
 CALLER_GRAPH           = YES
