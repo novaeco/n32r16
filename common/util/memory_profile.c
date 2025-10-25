@@ -32,6 +32,7 @@ esp_err_t memory_profile_init(void)
         s_profile.flash_size_bytes = flash_bytes;
     }
 
+#if CONFIG_SPIRAM
     s_profile.psram_available = esp_psram_is_initialized();
     if (s_profile.psram_available) {
         s_profile.psram_size_bytes = esp_psram_get_size();
@@ -42,6 +43,16 @@ esp_err_t memory_profile_init(void)
         s_profile.psram_size_bytes = 0;
         s_profile.psram_free_bytes = 0;
     }
+    }
+#else
+    s_profile.psram_available = esp_psram_is_initialized();
+    if (s_profile.psram_available) {
+        s_profile.psram_size_bytes = esp_psram_get_size();
+        multi_heap_info_t info = {0};
+        heap_caps_get_info(&info, MALLOC_CAP_SPIRAM);
+        s_profile.psram_free_bytes = info.total_free_bytes;
+    }
+#endif
 
     multi_heap_info_t internal_info = {0};
     heap_caps_get_info(&internal_info, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
