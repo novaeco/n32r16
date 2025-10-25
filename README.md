@@ -5,10 +5,10 @@ Firmware for a two-node ESP32-S3 platform delivering real-time sensor acquisitio
 ## Hardware Overview
 
 ### Sensor Node (ESP32-S3-WROOM-2-N32R16V)
-- Dual SHT20 temperature/humidity sensors @ I²C 0x40.
+- Dual ambient sensors on I²C with Kconfig-selectable driver (`CONFIG_SENSOR_AMBIENT_SENSOR_SHT20` default, `CONFIG_SENSOR_AMBIENT_SENSOR_BME280` optional).
 - MCP23017 GPIO expanders @ 0x20 and 0x21 (inputs/outputs, 4.7 kΩ pull-ups on SDA/SCL).
-- PCA9685 PWM controller @ 0x41 (500 Hz default, 12-bit duty).
-- Four DS18B20 sensors on a shared 1-Wire bus (GPIO8, 4.7 kΩ pull-up).
+- External PWM backend selectable via `CONFIG_SENSOR_PWM_BACKEND` (`pca9685` default at 500 Hz, 12-bit duty) with software fallback when disabled.
+- Four DS18B20 sensors on a shared 1-Wire bus (`CONFIG_SENSOR_ONEWIRE_GPIO` default GPIO8, 4.7 kΩ pull-up).
 - Wi-Fi STA, WebSocket server (`/ws`), mDNS advertiser `_hmi-sensor._tcp`.
 
 ### HMI Node (Waveshare ESP32-S3 Touch LCD 7B, 1024×600)
@@ -83,6 +83,12 @@ Replace `/dev/ttyUSBx` with your serial device.
 ```bash
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
+
+### Sensor Node Kconfig Highlights
+
+- **Ambient sensor type** (`CONFIG_SENSOR_AMBIENT_SENSOR_*`) toggles between the legacy dual SHT20 stack and the Bosch BME280 backend with full calibration handling.
+- **1-Wire GPIO selector** (`CONFIG_SENSOR_ONEWIRE_GPIO`) adapts the DS18B20 bus to alternate ESP32-S3 pinouts without patching board headers.
+- **PWM backend** (`CONFIG_SENSOR_PWM_BACKEND`, `CONFIG_SENSOR_PWM_BACKEND_DRIVER_*`) enables PCA9685 control, prepares for TLC5947 SPI expansion, or disables hardware outputs for bench simulation.
 
 ## Wi-Fi & Networking
 - **Provisioning** – Both firmwares leverage the ESP-IDF provisioning manager in secure SoftAP mode with proof-of-possession. At

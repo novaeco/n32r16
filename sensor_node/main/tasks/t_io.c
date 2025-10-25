@@ -2,12 +2,16 @@
 
 #include "drivers/mcp23017.h"
 #include "drivers/pca9685.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
 #include "io/io_map.h"
+#include "sdkconfig.h"
 #include <string.h>
+
+static const char *TAG = "t_io";
 
 typedef enum {
     IO_CMD_SET_PWM,
@@ -47,8 +51,12 @@ static void io_task(void *arg)
 {
     (void)arg;
     const io_map_t *map = io_map_get();
-
-    pca9685_init(map->pca9685_address, s_pwm_freq);
+    bool pwm_hw_available = (map->pwm_backend == IO_PWM_BACKEND_PCA9685) && map->pca9685_address != 0;
+    if (pwm_hw_available) {
+        pca9685_init(map->pca9685_address, s_pwm_freq);
+    } else {
+        ESP_LOGW(TAG, "PWM backend '%s' not initialised; persisting state only", CONFIG_SENSOR_PWM_BACKEND);
+    }
     mcp23017_init(map->mcp23017_addresses[0], 0xFFFF, 0xFFFF);
     mcp23017_init(map->mcp23017_addresses[1], 0xFFFF, 0xFFFF);
 
@@ -58,13 +66,17 @@ static void io_task(void *arg)
             switch (cmd.type) {
             case IO_CMD_SET_PWM:
                 s_pwm[cmd.data.pwm.channel % 16] = cmd.data.pwm.duty;
-                pca9685_set_pwm(map->pca9685_address, cmd.data.pwm.channel % 16, cmd.data.pwm.duty);
+                if (pwm_hw_available) {
+                    pca9685_set_pwm(map->pca9685_address, cmd.data.pwm.channel % 16, cmd.data.pwm.duty);
+                }
                 break;
             case IO_CMD_SET_PWM_FREQ:
                 s_pwm_freq = cmd.data.pwm_freq;
-                pca9685_init(map->pca9685_address, s_pwm_freq);
-                for (uint8_t i = 0; i < 16; ++i) {
-                    pca9685_set_pwm(map->pca9685_address, i, s_pwm[i]);
+                if (pwm_hw_available) {
+                    pca9685_init(map->pca9685_address, s_pwm_freq);
+                    for (uint8_t i = 0; i < 16; ++i) {
+                        pca9685_set_pwm(map->pca9685_address, i, s_pwm[i]);
+                    }
                 }
                 break;
             case IO_CMD_WRITE_GPIO: {

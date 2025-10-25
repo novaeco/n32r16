@@ -42,7 +42,7 @@
 | Module | Ajustements nécessaires | sdkconfig additionnel |
 |--------|-------------------------|-----------------------|
 | ESP32-S3-WROOM-2-N8R8 | Désactiver PSRAM OPI, taille flash 8 Mo | `CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y`, `CONFIG_ESPTOOLPY_FLASHMODE_QIO=y` |
-| ESP32-S3-MINI-1 | Cartographie GPIO différente : déplacer 1-Wire sur GPIO4 | `CONFIG_SENSOR_ONEWIRE_GPIO=4` (ajouter option Kconfig dédiée) |
+| ESP32-S3-MINI-1 | Cartographie GPIO différente : déplacer 1-Wire sur GPIO4 | `CONFIG_SENSOR_ONEWIRE_GPIO=4` |
 | ESP32-S3-USB-OTG | Alimentation via USB-OTG, ajuster alimentation 5 V | Vérifier `CONFIG_ESP32S3_USB_OTG_SUPPORTED=y` |
 
 ## 4. Adaptation à d'autres périphériques
@@ -50,15 +50,8 @@
 ### 4.1. Capteurs I²C alternatifs
 
 - **SHT31-DIS** : remplacer `drivers/sht20.c` par une implémentation SHT31, garder l'interface `sht20_read_temperature_humidity` pour compatibilité.
-- **BME280** : créer un module `drivers/bme280.c` exposant `sensor_bus_read/Write` puis mapper dans `tasks/t_sensors.c` via une fabrique sélectionnée par Kconfig.
-- Ajouter dans `Kconfig.projbuild` :
-  ```
-  choice
-      prompt "Ambient sensor type"
-      default SENSOR_AMBIENT_SHT20
-  endchoice
-  ```
-  et utiliser des `#if CONFIG_SENSOR_AMBIENT_BME280` dans `t_sensors.c`.
+- **BME280** : sélectionnez `Sensor Node Options → Ambient sensor type → Bosch BME280` pour activer le driver `drivers/bme280.c`. Les lectures compensées température/humidité/pression sont automatiquement converties et publiées dans le data model.
+- Le choix `Sensor Node Options → Ambient sensor type` expose les symboles `CONFIG_SENSOR_AMBIENT_SENSOR_SHT20` / `CONFIG_SENSOR_AMBIENT_SENSOR_BME280`. Utilisez-les pour encapsuler les inclusions conditionnelles dans le code.
 
 ### 4.2. Extension GPIO
 
@@ -67,7 +60,8 @@
 
 ### 4.3. PWM alternatif (TLC5947)
 
-- Créer `drivers/tlc5947.c` utilisant SPI. Prévoir un `CONFIG_SENSOR_PWM_BACKEND` dans Kconfig.
+- Créer `drivers/tlc5947.c` utilisant SPI. Sélectionner `Sensor Node Options → PWM backend → TI TLC5947 (SPI)` afin de publier `CONFIG_SENSOR_PWM_BACKEND="tlc5947"` et `CONFIG_SENSOR_PWM_BACKEND_DRIVER_TLC5947`.
+- L'option `Disable external PWM backend` laisse `t_io` propager les commandes uniquement dans le data model sans toucher de contrôleur matériel ; utilisez-la pour les maquettes sans PCA9685/TLC5947.
 - Adapter `data_model_set_pwm` pour accepter 24 canaux mais limiter à 16 lors de l'encodage JSON.
 
 ## 5. Diagramme de séquence acquisition → publication
