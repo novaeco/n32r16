@@ -12,6 +12,8 @@ static const char *TAG = "ws_client";
 static esp_websocket_client_handle_t s_client;
 static ws_client_rx_cb_t s_rx_cb;
 static void *s_rx_ctx;
+static ws_client_error_cb_t s_error_cb;
+static void *s_error_ctx;
 static bool s_connected;
 static bool s_should_run;
 static TimerHandle_t s_reconnect_timer;
@@ -237,6 +239,11 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
             s_rx_cb(payload, len, crc32, s_rx_ctx);
         }
         break;
+    case WEBSOCKET_EVENT_ERROR:
+        if (s_error_cb && data) {
+            s_error_cb(data, s_error_ctx);
+        }
+        break;
     default:
         break;
     }
@@ -278,6 +285,8 @@ static void cleanup_client(void)
     s_auth_header = NULL;
     s_rx_cb = NULL;
     s_rx_ctx = NULL;
+    s_error_cb = NULL;
+    s_error_ctx = NULL;
     s_connected = false;
 }
 
@@ -352,6 +361,8 @@ esp_err_t ws_client_start(const ws_client_config_t *config, ws_client_rx_cb_t cb
 
     s_rx_cb = cb;
     s_rx_ctx = ctx;
+    s_error_cb = config->error_cb;
+    s_error_ctx = config->error_ctx;
     s_should_run = true;
     s_connected = false;
 

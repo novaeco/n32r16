@@ -6,6 +6,7 @@ Firmware for a two-node ESP32-S3 platform delivering real-time sensor acquisitio
 
 ### Sensor Node (ESP32-S3-WROOM-2-N32R16V)
 - Dual ambient sensors on I²C with Kconfig-selectable driver (`CONFIG_SENSOR_AMBIENT_SENSOR_SHT20` default, `CONFIG_SENSOR_AMBIENT_SENSOR_BME280` optional).
+- Optional TCA9548A I²C multiplexer (`CONFIG_SENSOR_AMBIENT_TCA9548A_ENABLE`) isolates dual SHT20 probes onto distinct downstream buses, preventing the fixed 0x40 address collision.
 - MCP23017 GPIO expanders @ 0x20 and 0x21 (inputs/outputs, 4.7 kΩ pull-ups on SDA/SCL).
 - External PWM backend selectable via `CONFIG_SENSOR_PWM_BACKEND` (`pca9685` default at 500 Hz, 12-bit duty) with software fallback when disabled.
 - Four DS18B20 sensors on a shared 1-Wire bus (`CONFIG_SENSOR_ONEWIRE_GPIO` default GPIO8, 4.7 kΩ pull-up).
@@ -87,23 +88,27 @@ idf.py -p /dev/ttyUSB0 flash monitor
 ### Sensor Node Kconfig Highlights
 
 - **Ambient sensor type** (`CONFIG_SENSOR_AMBIENT_SENSOR_*`) toggles between the legacy dual SHT20 stack and the Bosch BME280 backend with full calibration handling.
+- **Ambient mux** (`CONFIG_SENSOR_AMBIENT_TCA9548A_ENABLE`, `CONFIG_SENSOR_TCA9548A_CH*`) drives the onboard TCA9548A to fan out the SHT20 pair across independent channels and exposes address/slot overrides.
 - **1-Wire GPIO selector** (`CONFIG_SENSOR_ONEWIRE_GPIO`) adapts the DS18B20 bus to alternate ESP32-S3 pinouts without patching board headers.
 - **PWM backend** (`CONFIG_SENSOR_PWM_BACKEND`, `CONFIG_SENSOR_PWM_BACKEND_DRIVER_*`) enables PCA9685 control, prepares for TLC5947 SPI expansion, or disables hardware outputs for bench simulation.
 
 ## Wi-Fi & Networking
-- **Provisioning** – Both firmwares leverage the ESP-IDF provisioning manager in secure SoftAP mode with proof-of-possession. At
-  boot, the node exposes `SENSOR-XXYYZZ` / `HMI-XXYYZZ` (suffix configurable via `CONFIG_SENSOR_PROV_SERVICE_NAME` and
-  `CONFIG_HMI_PROV_SERVICE_NAME`). Provide the POP values from `CONFIG_SENSOR_PROV_POP` / `CONFIG_HMI_PROV_POP` via the companion
-  provisioning tool to inject Wi-Fi credentials, which are stored in the encrypted NVS partition.
+- **Provisioning** – Both firmwares now enforce ESP-IDF Security 2 (SRP6a). Supply Base64-encoded salt/verifier material through
+  `CONFIG_SENSOR_PROV_SEC2_SALT_BASE64` / `CONFIG_SENSOR_PROV_SEC2_VERIFIER_BASE64` and `CONFIG_HMI_PROV_SEC2_SALT_BASE64` /
+  `CONFIG_HMI_PROV_SEC2_VERIFIER_BASE64`, and align the SRP username using `CONFIG_SENSOR_PROV_SEC2_USERNAME` /
+  `CONFIG_HMI_PROV_SEC2_USERNAME`. The provisioning SSID broadcasts `SENSOR-XXYYZZ` / `HMI-XXYYZZ` (suffix configurable via
+  `CONFIG_SENSOR_PROV_SERVICE_NAME` and `CONFIG_HMI_PROV_SERVICE_NAME`). Proof-of-possession secrets remain configurable for
+  legacy tooling compatibility via `CONFIG_SENSOR_PROV_POP` / `CONFIG_HMI_PROV_POP`. All credentials are persisted in the
+  encrypted NVS partition.
 - **Bearer-token authenticated TLS** – The sensor node now serves `wss://` on `CONFIG_SENSOR_WS_PORT` using the PEM materials
   embedded by `components/cert_store`. Clients must present the bearer token configured in `CONFIG_SENSOR_WS_AUTH_TOKEN`. The HMI
   node validates the server certificate against the CA bundle supplied by `cert_store` and injects its own bearer token via
   `CONFIG_HMI_WS_AUTH_TOKEN`.
 - **Service discovery** – mDNS advertising remains on `_hmi-sensor._tcp` but the HMI now consumes TXT metadata (`proto`,
   `path`, optional `host`/`sni`) and IPv6 A/AAAA answers to build the WebSocket URI. Successful discoveries persist the URI/SNI
-  pair in encrypted NVS so cold boots reuse the last known good endpoint when the service temporarily disappears. The timeout
-  before the static fallback is tuned via `CONFIG_HMI_DISCOVERY_TIMEOUT_MS`, and production deployments can pin the TLS Server
-  Name Indication with `CONFIG_HMI_WS_TLS_SNI_OVERRIDE`.
+  pair in encrypted NVS with an expiry governed by `CONFIG_HMI_DISCOVERY_CACHE_TTL_MINUTES`, so stale endpoints are purged
+  automatically. The timeout before falling back to the static hostname is tuned via `CONFIG_HMI_DISCOVERY_TIMEOUT_MS`, and
+  production deployments can pin the TLS Server Name Indication with `CONFIG_HMI_WS_TLS_SNI_OVERRIDE`.
 - **Payloads** – JSON remains the default payload format with optional TinyCBOR support toggled via `CONFIG_USE_CBOR`. All frames
   continue to prepend a CRC32 (little-endian) for integrity checks, and the HMI dashboard surfaces CRC status for quick diagnostics.
 - **OTA updates** – Both firmwares schedule HTTPS OTA fetches on boot using `CONFIG_SENSOR_OTA_URL` / `CONFIG_HMI_OTA_URL` and the

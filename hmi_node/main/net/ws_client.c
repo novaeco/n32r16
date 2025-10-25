@@ -4,6 +4,7 @@
 #include "common/net/wifi_manager.h"
 #include "common/net/ws_client.h"
 #include "common/proto/messages.h"
+#include "common/util/base64_utils.h"
 #include "common/util/monotonic.h"
 #include "prefs_store.h"
 #include "cert_store.h"
@@ -16,6 +17,7 @@
 #include "mdns.h"
 #include "nvs.h"
 #include "sdkconfig.h"
+#include <inttypes.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -25,16 +27,30 @@ static hmi_data_model_t *s_model;
 static bool s_use_cbor;
 static uint32_t s_next_command_seq;
 static char s_discovered_server_name[64];
+static uint8_t s_sec2_salt[32];
+static uint8_t s_sec2_verifier[384];
+static wifi_manager_sec2_params_t s_sec2_params = {
+    .salt = s_sec2_salt,
+    .verifier = s_sec2_verifier,
+};
+static bool s_sec2_loaded;
+static bool s_wifi_ready;
 
 #define DISCOVERY_CACHE_NAMESPACE "hmi_net"
 #define DISCOVERY_CACHE_URI_KEY "last_uri"
 #define DISCOVERY_CACHE_SNI_KEY "last_sni"
+#define DISCOVERY_CACHE_TS_KEY "last_ts"
 
 typedef struct {
     char proto[8];
     char path[64];
     char host[64];
 } service_metadata_t;
+
+static esp_err_t ensure_sec2_params(void);
+static esp_err_t ensure_wifi_ready(void);
+static void invalidate_cached_service(void);
+static void ws_error_cb(const esp_websocket_event_data_t *event, void *ctx);
 
 #ifndef INET6_ADDRSTRLEN
 #define INET6_ADDRSTRLEN 46
@@ -49,6 +65,24 @@ static void set_discovered_server_name(const char *name)
     strlcpy(s_discovered_server_name, name, sizeof(s_discovered_server_name));
 }
 
+static void invalidate_cached_service(void)
+{
+    esp_err_t err = hmi_prefs_store_init();
+    if (err != ESP_OK) {
+        return;
+    }
+    nvs_handle_t handle = 0;
+    err = nvs_open_from_partition("nvs", DISCOVERY_CACHE_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return;
+    }
+    nvs_erase_key(handle, DISCOVERY_CACHE_URI_KEY);
+    nvs_erase_key(handle, DISCOVERY_CACHE_SNI_KEY);
+    nvs_erase_key(handle, DISCOVERY_CACHE_TS_KEY);
+    nvs_commit(handle);
+    nvs_close(handle);
+}
+
 static const char *select_tls_server_name(const char *fallback_host)
 {
     if (CONFIG_HMI_WS_TLS_SNI_OVERRIDE[0] != '\0') {
@@ -61,6 +95,63 @@ static const char *select_tls_server_name(const char *fallback_host)
         return fallback_host;
     }
     return NULL;
+}
+
+static esp_err_t ensure_sec2_params(void)
+{
+    if (s_sec2_loaded) {
+        return ESP_OK;
+    }
+    size_t salt_len = 0;
+    size_t verifier_len = 0;
+    esp_err_t err = base64_utils_decode(CONFIG_HMI_PROV_SEC2_SALT_BASE64, s_sec2_salt, sizeof(s_sec2_salt), &salt_len);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to decode SRP salt: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = base64_utils_decode(CONFIG_HMI_PROV_SEC2_VERIFIER_BASE64, s_sec2_verifier, sizeof(s_sec2_verifier), &verifier_len);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to decode SRP verifier: %s", esp_err_to_name(err));
+        return err;
+    }
+    s_sec2_params.salt_len = salt_len;
+    s_sec2_params.verifier_len = verifier_len;
+    s_sec2_loaded = true;
+    return ESP_OK;
+}
+
+static esp_err_t ensure_wifi_ready(void)
+{
+    if (s_wifi_ready) {
+        return ESP_OK;
+    }
+    esp_err_t err = ensure_sec2_params();
+    if (err != ESP_OK) {
+        return err;
+    }
+    wifi_manager_config_t wifi_cfg = {
+        .power_save = false,
+        .service_name_suffix = CONFIG_HMI_PROV_SERVICE_NAME,
+        .pop = CONFIG_HMI_PROV_POP,
+        .service_key = NULL,
+#if CONFIG_HMI_PROV_PREFER_BLE
+        .prefer_ble = true,
+#else
+        .prefer_ble = false,
+#endif
+        .force_provisioning = false,
+        .provisioning_timeout_ms = CONFIG_HMI_PROV_TIMEOUT_MS,
+        .connect_timeout_ms = CONFIG_HMI_PROV_CONNECT_TIMEOUT_MS,
+        .max_connect_attempts = CONFIG_HMI_PROV_MAX_ATTEMPTS,
+        .sec2_params = &s_sec2_params,
+        .sec2_username = CONFIG_HMI_PROV_SEC2_USERNAME,
+    };
+    err = wifi_manager_start(&wifi_cfg);
+    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+        s_wifi_ready = true;
+        return ESP_OK;
+    }
+    return err;
 }
 
 static bool load_cached_service(char *uri, size_t uri_len)
@@ -90,9 +181,25 @@ static bool load_cached_service(char *uri, size_t uri_len)
             err = ESP_OK;
         }
     }
+    if (err == ESP_OK) {
+        uint32_t last_seen = 0;
+        err = nvs_get_u32(handle, DISCOVERY_CACHE_TS_KEY, &last_seen);
+        if (err == ESP_OK) {
+            uint32_t now = monotonic_time_ms();
+            uint32_t age = now - last_seen;
+            uint64_t ttl_ms = (uint64_t)CONFIG_HMI_DISCOVERY_CACHE_TTL_MINUTES * 60000ULL;
+            if (ttl_ms > 0 && (uint64_t)age > ttl_ms) {
+                ESP_LOGI(TAG, "Cached sensor endpoint expired (%u ms > %" PRIu64 " ms)", age, ttl_ms);
+                err = ESP_ERR_INVALID_STATE;
+            }
+        }
+    }
     nvs_close(handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "failed to load discovery cache: %s", esp_err_to_name(err));
+        if (err == ESP_ERR_INVALID_STATE) {
+            invalidate_cached_service();
+        }
         return false;
     }
     ESP_LOGI(TAG, "Using cached sensor endpoint %s", uri);
@@ -121,6 +228,10 @@ static void store_cached_service(const char *uri)
     if (set_err == ESP_OK) {
         const char *sni = s_discovered_server_name[0] ? s_discovered_server_name : "";
         set_err = nvs_set_str(handle, DISCOVERY_CACHE_SNI_KEY, sni);
+    }
+    if (set_err == ESP_OK) {
+        uint32_t now = monotonic_time_ms();
+        set_err = nvs_set_u32(handle, DISCOVERY_CACHE_TS_KEY, now);
     }
     if (set_err == ESP_OK) {
         set_err = nvs_commit(handle);
@@ -289,6 +400,16 @@ static void ws_rx(const uint8_t *data, size_t len, uint32_t crc, void *ctx)
     handle_sensor_update(data, len, crc);
 }
 
+static void ws_error_cb(const esp_websocket_event_data_t *event, void *ctx)
+{
+    (void)ctx;
+    if (!event) {
+        return;
+    }
+    ESP_LOGW(TAG, "WebSocket transport error, purging cached discovery metadata");
+    invalidate_cached_service();
+}
+
 static bool discover_service(char *uri, size_t uri_len)
 {
     set_discovered_server_name(NULL);
@@ -327,8 +448,11 @@ static bool discover_service(char *uri, size_t uri_len)
     return false;
 }
 
-void hmi_ws_client_start(hmi_data_model_t *model)
+esp_err_t hmi_ws_client_start(hmi_data_model_t *model)
 {
+    if (!model) {
+        return ESP_ERR_INVALID_ARG;
+    }
     s_model = model;
 #if CONFIG_USE_CBOR
     s_use_cbor = true;
@@ -337,17 +461,11 @@ void hmi_ws_client_start(hmi_data_model_t *model)
 #endif
     s_next_command_seq = 0;
 
-    wifi_manager_config_t wifi_cfg = {
-        .power_save = false,
-        .service_name_suffix = CONFIG_HMI_PROV_SERVICE_NAME,
-        .pop = CONFIG_HMI_PROV_POP,
-#ifdef CONFIG_HMI_PROV_PREFER_BLE
-        .prefer_ble = true,
-#else
-        .prefer_ble = false,
-#endif
-    };
-    ESP_ERROR_CHECK(wifi_manager_start(&wifi_cfg));
+    esp_err_t err = ensure_wifi_ready();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi provisioning failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     char uri[128];
     const char *fallback_host = NULL;
@@ -372,11 +490,18 @@ void hmi_ws_client_start(hmi_data_model_t *model)
         .reconnect_min_delay_ms = 2000,
         .reconnect_max_delay_ms = 60000,
         .tls_server_name = tls_server_name,
+        .error_cb = ws_error_cb,
+        .error_ctx = NULL,
     };
     esp_err_t start_err = ws_client_start(&cfg, ws_rx, NULL);
+    if (start_err == ESP_ERR_INVALID_STATE) {
+        return ESP_OK;
+    }
     if (start_err != ESP_OK) {
         ESP_LOGE(TAG, "WebSocket start failed: %s", esp_err_to_name(start_err));
+        invalidate_cached_service();
     }
+    return start_err;
 }
 
 void hmi_ws_client_stop(void)

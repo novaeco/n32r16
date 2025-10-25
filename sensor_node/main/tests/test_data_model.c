@@ -9,8 +9,8 @@ static void seed_baseline(sensor_data_model_t *model)
     uint16_t duty[16] = {0};
     onewire_device_t device = {0};
 
-    data_model_set_sht20(model, 0, "SHT20_A", 20.0f, 50.0f);
-    data_model_set_sht20(model, 1, "SHT20_B", 21.5f, 48.5f);
+    data_model_set_sht20(model, 0, "SHT20_A", 20.0f, 50.0f, true);
+    data_model_set_sht20(model, 1, "SHT20_B", 21.5f, 48.5f, true);
     data_model_set_ds18b20(model, 0, &device, 19.75f);
     data_model_set_gpio(model, 0, 0xAAAA, 0x5555);
     data_model_set_pwm(model, duty, 16, 500);
@@ -56,7 +56,7 @@ TEST_CASE("data_model publish thresholding", "[data_model]")
 
     TEST_ASSERT_FALSE(data_model_should_publish(&model, 0.5f, 2.0f));
 
-    data_model_set_sht20(&model, 0, "SHT20_A", 20.0f, 53.5f);
+    data_model_set_sht20(&model, 0, "SHT20_A", 20.0f, 53.5f, true);
     TEST_ASSERT_TRUE(data_model_should_publish(&model, 0.5f, 2.0f));
 
     data_model_set_timestamp(&model, 2000);

@@ -10,6 +10,7 @@ typedef struct {
     char id[16];
     float temperature_c;
     float humidity_percent;
+    bool valid;
 } proto_sht20_reading_t;
 
 typedef struct {

@@ -10,6 +10,7 @@ idf_component_register(SRCS
     "drivers/pca9685.c"
     "drivers/mcp23017.c"
     "drivers/ds18b20.c"
+    "drivers/tca9548a.c"
     "tasks/t_sensors.c"
     "tasks/t_io.c"
     "tasks/t_heartbeat.c"

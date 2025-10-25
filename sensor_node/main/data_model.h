@@ -43,9 +43,10 @@ void data_model_init(sensor_data_model_t *model);
  * @param id Human readable identifier copied into the payload.
  * @param temp Temperature in degrees Celsius.
  * @param humidity Relative humidity in percent.
+ * @param valid True when the measurement is fresh and valid.
  */
 void data_model_set_sht20(sensor_data_model_t *model, size_t index, const char *id, float temp,
-                          float humidity);
+                          float humidity, bool valid);
 
 /**
  * @brief Store a DS18B20 reading inside the model.

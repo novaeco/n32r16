@@ -11,6 +11,33 @@ menu "Sensor Node Options"
     config SENSOR_AMBIENT_SENSOR_SHT20
         bool "Sensirion SHT20"
 
+    config SENSOR_AMBIENT_TCA9548A_ENABLE
+        bool "Use TCA9548A mux for dual SHT20"
+        depends on SENSOR_AMBIENT_SENSOR_SHT20
+        default y
+        help
+            Enable this option when both ambient channels are populated with SHT20 sensors.
+            The firmware will drive a TCA9548A I\u00b2C multiplexer to expose the fixed-address
+            sensors on distinct downstream buses, avoiding collisions on 0x40.
+
+    config SENSOR_TCA9548A_ADDRESS
+        hex "TCA9548A I2C address"
+        depends on SENSOR_AMBIENT_TCA9548A_ENABLE
+        range 0x70 0x77
+        default 0x70
+
+    config SENSOR_TCA9548A_CH0
+        int "TCA9548A channel for ambient sensor #1"
+        depends on SENSOR_AMBIENT_TCA9548A_ENABLE
+        range 0 7
+        default 0
+
+    config SENSOR_TCA9548A_CH1
+        int "TCA9548A channel for ambient sensor #2"
+        depends on SENSOR_AMBIENT_TCA9548A_ENABLE
+        range 0 7
+        default 1
+
     config SENSOR_AMBIENT_SENSOR_BME280
         bool "Bosch BME280"
 
@@ -71,6 +98,27 @@ menu "Sensor Node Options"
     config SENSOR_PROV_POP
         string "Provisioning proof-of-possession"
         default "sensor-pop"
+    config SENSOR_PROV_SEC2_USERNAME
+        string "Provisioning SRP username"
+        default "wifiprov"
+    config SENSOR_PROV_SEC2_SALT_BASE64
+        string "Provisioning SRP salt (Base64)"
+        default "A27gx7y57ahMnqyX2T3s9A=="
+    config SENSOR_PROV_SEC2_VERIFIER_BASE64
+        string "Provisioning SRP verifier (Base64)"
+        default "fHyFR2UIlG3WNq831+iRQ3jP/WFsWdL4OQgScjjeniSkcCYc36kDwrJw57EyJNoRHZcY3GByCMyayQxIJ+KuiaoWJbgE0hqbOo839uQ6cS7hJ4Zurc4o/1RGYB+5lofcV0Cn1GzJd1TcFoLw7TVqxHCtPZC1gZRw17xlstUY4C7Dpflo3WR7uLc8nPwA2HF+t5p8sbfCwxg0KTJDPgCZ6YKU49gqsJYpt98OXwgzQHZSkTIAn5csiWw5HsgoBUQXP2gCip9EYdH1oX5acNLHI4HLOGjkLCC8QFd2F70IuJa8JusyRmk1BYwVcNkb6b7MqTimZ/CtUBMZcmS/UsI04hsReXRyvTRbseL9ZnP+cWR00E68USQZQIcOkkDmIectTjd2Ly7iaMeJ6DITQgaEhFNKswwbTI0cUZcZq653/9vs8BCVNDNryz6ED7nYX7iguFVTPnD3GPXOe06/J87OqLO+QMXFMik+cWSe3oz2daHm9lPIMah43lBA92LeNrK6"
+    config SENSOR_PROV_TIMEOUT_MS
+        int "Provisioning completion timeout (ms)"
+        range 1000 600000
+        default 180000
+    config SENSOR_PROV_CONNECT_TIMEOUT_MS
+        int "Wi-Fi connect attempt timeout (ms)"
+        range 1000 120000
+        default 20000
+    config SENSOR_PROV_MAX_ATTEMPTS
+        int "Maximum Wi-Fi connect attempts before failing"
+        range 1 20
+        default 5
     config SENSOR_PROV_PREFER_BLE
         bool "Préférer le schéma de provisioning BLE"
         default n

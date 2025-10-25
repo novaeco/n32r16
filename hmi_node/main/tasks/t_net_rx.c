@@ -3,23 +3,29 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "net/ws_client.h"
+#include "esp_log.h"
 
 static hmi_data_model_t *s_model;
+static const char *TAG = "t_net";
 
 static void net_task(void *arg)
 {
     (void)arg;
-    hmi_ws_client_start(s_model);
+    bool ws_started = false;
     while (true) {
+        if (!ws_started) {
+            esp_err_t err = hmi_ws_client_start(s_model);
+            if (err == ESP_OK) {
+                ws_started = true;
+            } else {
+                ESP_LOGE(TAG, "Failed to start WS client: %s", esp_err_to_name(err));
+                vTaskDelay(pdMS_TO_TICKS(5000));
+                continue;
+            }
+        }
         bool connected = hmi_ws_client_is_connected();
         hmi_data_model_set_connected(s_model, connected);
-        if (!connected) {
-            vTaskDelay(pdMS_TO_TICKS(5000));
-            hmi_ws_client_stop();
-            hmi_ws_client_start(s_model);
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 

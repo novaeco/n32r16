@@ -4,6 +4,7 @@
 #include "common/net/wifi_manager.h"
 #include "common/net/ws_server.h"
 #include "common/proto/messages.h"
+#include "common/util/base64_utils.h"
 #include "common/util/monotonic.h"
 #include "cert_store.h"
 #include "esp_log.h"
@@ -17,6 +18,12 @@ static const char *TAG = "sensor_ws";
 static sensor_data_model_t *s_model;
 static bool s_use_cbor;
 static uint8_t s_tx_frame[SENSOR_DATA_MODEL_MAX_MESSAGE_SIZE + sizeof(uint32_t)];
+static uint8_t s_sec2_salt[32];
+static uint8_t s_sec2_verifier[384];
+static wifi_manager_sec2_params_t s_sec2_params = {
+    .salt = s_sec2_salt,
+    .verifier = s_sec2_verifier,
+};
 
 static void ws_rx(const uint8_t *data, size_t len, uint32_t crc, void *ctx)
 {
@@ -47,6 +54,14 @@ void sensor_ws_server_start(sensor_data_model_t *model)
     s_use_cbor = false;
 #endif
 
+    size_t salt_len = 0;
+    size_t verifier_len = 0;
+    ESP_ERROR_CHECK(base64_utils_decode(CONFIG_SENSOR_PROV_SEC2_SALT_BASE64, s_sec2_salt, sizeof(s_sec2_salt), &salt_len));
+    ESP_ERROR_CHECK(base64_utils_decode(CONFIG_SENSOR_PROV_SEC2_VERIFIER_BASE64, s_sec2_verifier, sizeof(s_sec2_verifier),
+                                        &verifier_len));
+    s_sec2_params.salt_len = salt_len;
+    s_sec2_params.verifier_len = verifier_len;
+
     wifi_manager_config_t wifi_cfg = {
         .power_save = false,
         .service_name_suffix = CONFIG_SENSOR_PROV_SERVICE_NAME,
@@ -56,6 +71,12 @@ void sensor_ws_server_start(sensor_data_model_t *model)
 #else
         .prefer_ble = false,
 #endif
+        .force_provisioning = false,
+        .provisioning_timeout_ms = CONFIG_SENSOR_PROV_TIMEOUT_MS,
+        .connect_timeout_ms = CONFIG_SENSOR_PROV_CONNECT_TIMEOUT_MS,
+        .max_connect_attempts = CONFIG_SENSOR_PROV_MAX_ATTEMPTS,
+        .sec2_params = &s_sec2_params,
+        .sec2_username = CONFIG_SENSOR_PROV_SEC2_USERNAME,
     };
     ESP_ERROR_CHECK(wifi_manager_start(&wifi_cfg));
     ESP_ERROR_CHECK(mdns_helper_start("sensor-node", "Sensor Node", CONFIG_SENSOR_WS_PORT));

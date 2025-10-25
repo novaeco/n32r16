@@ -3,10 +3,12 @@
 #include "drivers/ds18b20.h"
 #if CONFIG_SENSOR_AMBIENT_SENSOR_SHT20
 #include "drivers/sht20.h"
+#include "drivers/tca9548a.h"
 #endif
 #if CONFIG_SENSOR_AMBIENT_SENSOR_BME280
 #include "drivers/bme280.h"
 #endif
+#include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -59,6 +61,21 @@ static float ema_update(float prev, float sample, bool *initialized)
     return prev + AMBIENT_EMA_ALPHA * (sample - prev);
 }
 
+static esp_err_t select_ambient_channel(const io_ambient_sensor_t *sensor)
+{
+    if (!sensor) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (sensor->mux_channel == IO_MUX_CHANNEL_NONE || sensor->mux_address == 0) {
+        return ESP_OK;
+    }
+#if CONFIG_SENSOR_AMBIENT_SENSOR_SHT20 || CONFIG_SENSOR_AMBIENT_SENSOR_BME280
+    return tca9548a_select(sensor->mux_address, sensor->mux_channel);
+#else
+    return ESP_OK;
+#endif
+}
+
 static const char *ambient_sensor_name(io_ambient_sensor_type_t type)
 {
     switch (type) {
@@ -79,12 +96,13 @@ static esp_err_t ambient_sensor_init(const io_ambient_sensor_t *sensor)
     switch (sensor->type) {
     case IO_AMBIENT_SENSOR_SHT20:
 #if CONFIG_SENSOR_AMBIENT_SENSOR_SHT20
-        return ESP_OK;
+        return select_ambient_channel(sensor);
 #else
         return ESP_ERR_NOT_SUPPORTED;
 #endif
     case IO_AMBIENT_SENSOR_BME280:
 #if CONFIG_SENSOR_AMBIENT_SENSOR_BME280
+        ESP_RETURN_ON_ERROR(select_ambient_channel(sensor), TAG, "mux select");
         return bme280_init(sensor->address);
 #else
         return ESP_ERR_NOT_SUPPORTED;
@@ -102,12 +120,14 @@ static esp_err_t ambient_sensor_read(const io_ambient_sensor_t *sensor, float *t
     switch (sensor->type) {
     case IO_AMBIENT_SENSOR_SHT20:
 #if CONFIG_SENSOR_AMBIENT_SENSOR_SHT20
+        ESP_RETURN_ON_ERROR(select_ambient_channel(sensor), TAG, "mux select");
         return sht20_read_temperature_humidity(sensor->address, temp, humidity);
 #else
         return ESP_ERR_NOT_SUPPORTED;
 #endif
     case IO_AMBIENT_SENSOR_BME280:
 #if CONFIG_SENSOR_AMBIENT_SENSOR_BME280
+        ESP_RETURN_ON_ERROR(select_ambient_channel(sensor), TAG, "mux select");
         return bme280_read(sensor->address, temp, humidity, NULL);
 #else
         return ESP_ERR_NOT_SUPPORTED;
@@ -130,23 +150,25 @@ static void update_ambient_readings(void)
         float temp = 0.0f;
         float hum = 0.0f;
         esp_err_t err = ambient_sensor_read(sensor, &temp, &hum);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "%s %zu read failed: %s, using synthetic telemetry", ambient_sensor_name(sensor->type), i,
-                     esp_err_to_name(err));
-            TickType_t ticks = xTaskGetTickCount();
-            float t_demo = 22.5f + 0.75f * sinf((float)ticks / 750.0f + (float)i);
-            float h_demo = 55.0f + 4.0f * cosf((float)ticks / 900.0f + (float)i);
-            temp = t_demo;
-            hum = h_demo;
+        bool valid = (err == ESP_OK);
+        if (!valid) {
+            ESP_LOGW(TAG, "%s %zu read failed: %s", ambient_sensor_name(sensor->type), i, esp_err_to_name(err));
         }
-        temp = ema_update(s_ctx.ambient_temp_ema[i], temp, &s_ctx.ambient_initialized[i]);
-        hum = ema_update(s_ctx.ambient_hum_ema[i], hum, &s_ctx.ambient_initialized[i]);
-        s_ctx.ambient_temp_ema[i] = temp;
-        s_ctx.ambient_hum_ema[i] = hum;
+        float filtered_temp = s_ctx.ambient_temp_ema[i];
+        float filtered_hum = s_ctx.ambient_hum_ema[i];
+        if (valid) {
+            filtered_temp = ema_update(filtered_temp, temp, &s_ctx.ambient_initialized[i]);
+            filtered_hum = ema_update(filtered_hum, hum, &s_ctx.ambient_initialized[i]);
+            s_ctx.ambient_temp_ema[i] = filtered_temp;
+            s_ctx.ambient_hum_ema[i] = filtered_hum;
+        } else if (!s_ctx.ambient_initialized[i]) {
+            filtered_temp = NAN;
+            filtered_hum = NAN;
+        }
 
         char id[16];
         snprintf(id, sizeof(id), "%s_%u", ambient_sensor_name(sensor->type), (unsigned)i + 1U);
-        data_model_set_sht20(s_ctx.model, i, id, temp, hum);
+        data_model_set_sht20(s_ctx.model, i, id, filtered_temp, filtered_hum, valid);
     }
 }
 

@@ -90,6 +90,12 @@ static void format_rom_code(const uint8_t *rom_code, char *out, size_t len)
 
 static const char *format_temperature(char *buf, size_t len, float celsius, bool use_fahrenheit)
 {
+    if (!isfinite(celsius)) {
+        if (len > 0) {
+            snprintf(buf, len, "--");
+        }
+        return buf;
+    }
     float value = celsius;
     const char *unit = "°C";
     if (use_fahrenheit) {
@@ -633,14 +639,19 @@ static void update_pwm_state(const proto_sensor_update_t *update)
 static void update_charts(const proto_sensor_update_t *update, bool use_fahrenheit)
 {
     for (size_t i = 0; i < 2; ++i) {
-        float temp = i < update->sht20_count ? update->sht20[i].temperature_c : NAN;
-        float hum = i < update->sht20_count ? update->sht20[i].humidity_percent : NAN;
-        if (!isnan(temp)) {
+        bool valid = i < update->sht20_count && update->sht20[i].valid;
+        float temp = valid ? update->sht20[i].temperature_c : NAN;
+        float hum = valid ? update->sht20[i].humidity_percent : NAN;
+        if (valid && isfinite(temp)) {
             float value = use_fahrenheit ? (temp * 9.0f / 5.0f + 32.0f) : temp;
             lv_chart_set_next_value(s_chart_temp, s_temp_series[i], (lv_coord_t)(value * 10.0f));
+        } else {
+            lv_chart_set_next_value(s_chart_temp, s_temp_series[i], LV_CHART_POINT_NONE);
         }
-        if (!isnan(hum)) {
+        if (valid && isfinite(hum)) {
             lv_chart_set_next_value(s_chart_hum, s_hum_series[i], (lv_coord_t)(hum * 10.0f));
+        } else {
+            lv_chart_set_next_value(s_chart_hum, s_hum_series[i], LV_CHART_POINT_NONE);
         }
     }
     for (size_t i = 0; i < 4; ++i) {
@@ -660,13 +671,23 @@ void ui_update_sensor_data(const proto_sensor_update_t *update, bool use_fahrenh
     char buf[64];
     for (size_t i = 0; i < 2; ++i) {
         if (i < update->sht20_count) {
-            lv_label_set_text_fmt(s_sht20_name[i], "%s", update->sht20[i].id);
-            lv_label_set_text_fmt(s_sht20_temp[i], "Temp: %s",
-                                  format_temperature(buf, sizeof(buf), update->sht20[i].temperature_c,
-                                                     use_fahrenheit));
-            snprintf(buf, sizeof(buf), "RH: %.1f %%", update->sht20[i].humidity_percent);
-            lv_label_set_text(s_sht20_hum[i], buf);
+            const proto_sht20_reading_t *reading = &update->sht20[i];
+            const char *suffix = reading->valid ? "" : " (fault)";
+            lv_label_set_text_fmt(s_sht20_name[i], "%s%s", reading->id, suffix);
+            if (reading->valid && isfinite(reading->temperature_c)) {
+                lv_label_set_text_fmt(s_sht20_temp[i], "Temp: %s",
+                                      format_temperature(buf, sizeof(buf), reading->temperature_c, use_fahrenheit));
+            } else {
+                lv_label_set_text(s_sht20_temp[i], "Temp: --");
+            }
+            if (reading->valid && isfinite(reading->humidity_percent)) {
+                snprintf(buf, sizeof(buf), "RH: %.1f %%", reading->humidity_percent);
+                lv_label_set_text(s_sht20_hum[i], buf);
+            } else {
+                lv_label_set_text(s_sht20_hum[i], "RH: --");
+            }
         } else {
+            lv_label_set_text_fmt(s_sht20_name[i], "Sensor %u", (unsigned)(i + 1));
             lv_label_set_text(s_sht20_temp[i], "Temp: --");
             lv_label_set_text(s_sht20_hum[i], "RH: --");
         }
