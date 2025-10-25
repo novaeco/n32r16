@@ -55,10 +55,18 @@ pipeline de tests unitaires/coverage et génération automatique de documentatio
 1. Depuis `sensor_node/` :
    ```bash
    idf.py menuconfig
-   # Component config → Sensor Node Options → Enable gcov instrumentation for unit tests
+   # Component config → common_util → Common Components Options → Enable gcov instrumentation for shared components
+   # Sensor Node Options → Enable gcov instrumentation for unit tests
    idf.py save-defconfig
    ```
-2. Nettoyer et recompiler :
+2. Depuis `hmi_node/` :
+   ```bash
+   idf.py menuconfig
+   # Component config → common_util → Common Components Options → Enable gcov instrumentation for shared components
+   # HMI Node Options → Enable gcov instrumentation for unit tests
+   idf.py save-defconfig
+   ```
+3. Nettoyer et recompiler chaque projet :
    ```bash
    idf.py fullclean
    idf.py -T        # exécute Unity sur cible ou simulateur
@@ -67,12 +75,13 @@ pipeline de tests unitaires/coverage et génération automatique de documentatio
 ### 3.2. Générer les rapports GCOV
 
 1. Installer gcovr sur l'hôte : `pip install gcovr`.
-2. Lancer le script fourni :
+2. Lancer le script fourni (depuis la racine du dépôt) :
    ```bash
-   python tools/run_coverage.py --build-dir sensor_node/build --xml coverage.xml --html coverage.html
+   python tools/run_coverage.py --xml coverage.xml --html coverage.html --summary coverage.txt
    ```
-3. Publier `coverage.xml` dans la CI (GitLab/GitHub) pour le badge.
-4. Vérifier que le taux de couverture minimal est ≥ 80 % sur `sensor_node/main` et `common/`.
+3. Le script agrège automatiquement les artefacts des répertoires `sensor_node/build` et `hmi_node/build`, génère `coverage_badge.svg`
+   (badge SVG à publier dans la CI) et alimente les sorties TXT/HTML/XML.
+4. Vérifier que le taux de couverture minimal est ≥ 80 % sur `sensor_node/main`, `hmi_node/main` et `common/`.
 
 ### 3.3. Lignes de tests critiques
 

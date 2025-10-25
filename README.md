@@ -126,13 +126,19 @@ Detailed wiring matrices, PlantUML sequence diagrams, and hardware adaptation ad
 
 - Follow the end-to-end process captured in [`documentations/release_and_testing.md`](documentations/release_and_testing.md)
   covering git-tagged releases, issue triage, PR checklists, and CI requirements.
-- Enable GCOV instrumentation on the sensor node via `idf.py menuconfig` → *Sensor Node Options* → *Enable gcov
-  instrumentation for unit tests* (config symbol `CONFIG_SENSOR_ENABLE_GCOV`). Rebuild with `idf.py -T`, then execute
-  coverage extraction:
+- Enable GCOV instrumentation across shared components and both applications via `idf.py menuconfig`:
+  - *Component config* → *common_util* → *Common Components Options* → *Enable gcov instrumentation for shared components*
+    (`CONFIG_COMMON_ENABLE_GCOV`).
+  - *Sensor Node Options* → *Enable gcov instrumentation for unit tests* (`CONFIG_SENSOR_ENABLE_GCOV`).
+  - *HMI Node Options* → *Enable gcov instrumentation for unit tests* (`CONFIG_HMI_ENABLE_GCOV`).
+  Rebuild each project with `idf.py -T`, execute the Unity tests, then aggregate coverage:
 
   ```bash
-  python tools/run_coverage.py --build-dir sensor_node/build --xml coverage.xml --html coverage.html
+  python tools/run_coverage.py --xml coverage.xml --html coverage.html --summary coverage.txt
   ```
+
+- The script consumes all configured build directories (defaults to `sensor_node/build` and `hmi_node/build`), emits
+  consolidated Cobertura/HTML/TXT artefacts, and refreshes `coverage_badge.svg` at the repository root for CI badges.
 
 - The new Unity suite `tests/test_data_model.c` validates the publication heuristics and encoder buffer rotation to
   guarantee deterministic telemetry emission.

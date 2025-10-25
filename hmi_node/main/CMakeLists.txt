@@ -12,3 +12,7 @@ idf_component_register(SRCS
     REQUIRES common_proto common_net common_util common_ota cert_store lvgl esp_lcd_panel_rgb mdns
     TEST_SRCS "tests/test_ui_events.c"
     TEST_INCLUDE_DIRS "tests")
+if(CONFIG_HMI_ENABLE_GCOV)
+    target_compile_options(${COMPONENT_LIB} PRIVATE -fprofile-arcs -ftest-coverage)
+    target_link_options(${COMPONENT_LIB} PRIVATE -fprofile-arcs -ftest-coverage)
+endif()

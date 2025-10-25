@@ -1,0 +1,11 @@
+menu "Common Components Options"
+    config COMMON_ENABLE_GCOV
+        bool "Enable gcov instrumentation for shared components"
+        default n
+        help
+            Selecting this option appends "-fprofile-arcs -ftest-coverage" to the
+            compilation and linking flags for all common components. Enable it in
+            CI or dedicated coverage builds alongside project-specific coverage
+            options before executing unit tests so that gcov artefacts are
+            generated for aggregation by tools/run_coverage.py.
+endmenu
