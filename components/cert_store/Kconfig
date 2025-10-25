@@ -1,0 +1,47 @@
+menu "Certificate Store"
+    config CERT_STORE_OVERRIDE_FROM_NVS
+        bool "Load PEM overrides from NVS"
+        default y
+        help
+            When enabled, cert_store will attempt to load PEM blobs from the
+            configured NVS namespace before falling back to the built-in
+            certificates.
+
+    config CERT_STORE_NVS_PARTITION
+        string "NVS partition label"
+        depends on CERT_STORE_OVERRIDE_FROM_NVS
+        default "nvs"
+        help
+            Partition label passed to nvs_open_from_partition(). Only change if
+            the project stores certificate overrides in a custom partition.
+
+    config CERT_STORE_NVS_NAMESPACE
+        string "NVS namespace"
+        depends on CERT_STORE_OVERRIDE_FROM_NVS
+        default "cert_store"
+        help
+            Namespace containing the PEM blobs. Keys "server_cert",
+            "server_key" and "ca_cert" are expected.
+
+    config CERT_STORE_OVERRIDE_FROM_SPIFFS
+        bool "Load PEM overrides from SPIFFS"
+        default y
+        help
+            Attempt to mount the configured SPIFFS partition and read PEM files
+            before falling back to the built-in certificates.
+
+    config CERT_STORE_SPIFFS_PARTITION_LABEL
+        string "SPIFFS partition label"
+        depends on CERT_STORE_OVERRIDE_FROM_SPIFFS
+        default "storage"
+        help
+            Partition label passed to esp_vfs_spiffs_register().
+
+    config CERT_STORE_SPIFFS_MOUNT_POINT
+        string "SPIFFS mount point"
+        depends on CERT_STORE_OVERRIDE_FROM_SPIFFS
+        default "/certs"
+        help
+            Base path where PEM files are located. cert_store reads
+            server_cert.pem, server_key.pem and ca_cert.pem from this directory.
+endmenu

@@ -108,6 +108,76 @@ idf.py -p /dev/ttyUSB0 flash monitor
   trust anchors bundled in `cert_store`. Bootloader rollback is enabled; ensure production images share matching security
   configuration.
 
+## Security & Credential Management
+
+- **Compile-time credential enforcement** – Building either firmware now fails unless the bearer tokens, provisioning POPs and OTA
+  manifest URLs have been replaced. Toggle `CONFIG_SENSOR_ALLOW_PLACEHOLDER_SECRETS` / `CONFIG_HMI_ALLOW_PLACEHOLDER_SECRETS`
+  temporarily when developing with placeholders, otherwise update the string options under *Sensor Node Options* and *HMI Node
+  Options*. Runtime assertions also guard against trivially short secrets.
+- **Certificate overrides** – `components/cert_store` first searches for PEM blobs in NVS (`CONFIG_CERT_STORE_OVERRIDE_FROM_NVS`)
+  and then in a SPIFFS partition (`CONFIG_CERT_STORE_OVERRIDE_FROM_SPIFFS`). When no override is found the compiled-in assets in
+  `components/cert_store/certs/` are used. The shared partition table defines the SPIFFS partition `storage` at offset
+  `0x414000` (size 1 MiB).
+
+### Provisioning new PEM blobs via NVS
+
+1. Generate a CSV manifest with base64-encoded PEM payloads:
+
+   ```bash
+   python - <<'PY'
+   import base64, csv
+
+   def encode(path: str) -> str:
+       with open(path, "rb") as fh:
+           return base64.b64encode(fh.read()).decode()
+
+   rows = [
+       ("key", "type", "encoding", "value"),
+       ("server_cert", "data", "base64", encode("server_cert.pem")),
+       ("server_key", "data", "base64", encode("server_key.pem")),
+       ("ca_cert", "data", "base64", encode("ca_cert.pem")),
+   ]
+
+   with open("cert_store.csv", "w", newline="") as fh:
+       csv.writer(fh).writerows(rows)
+   PY
+   ```
+2. Build the NVS image for the 0x6000-byte partition at `0xB000`:
+
+   ```bash
+   python $IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py \
+       generate cert_store.csv cert_store_nvs.bin 0x6000
+   ```
+3. Flash the image to the ESP32-S3:
+
+   ```bash
+   esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 460800 write_flash 0xB000 cert_store_nvs.bin
+   ```
+
+### Provisioning new PEM blobs via SPIFFS
+
+1. Populate a staging directory with the replacement PEM files:
+
+   ```bash
+   mkdir -p cert_spiffs
+   cp server_cert.pem cert_spiffs/
+   cp server_key.pem cert_spiffs/
+   cp ca_cert.pem cert_spiffs/
+   ```
+2. Build the SPIFFS image (partition size 1 MiB at `0x414000`):
+
+   ```bash
+   python $IDF_PATH/components/spiffs/spiffsgen.py 0x100000 cert_spiffs cert_store_spiffs.bin
+   ```
+3. Flash the image:
+
+   ```bash
+   esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 460800 write_flash 0x414000 cert_store_spiffs.bin
+   ```
+
+The firmware automatically reloads the overrides on the next boot. Delete the NVS keys (using `nvs_util.py`) or wipe the SPIFFS
+partition to revert to the compiled certificates.
+
 ## Wiring Summary
 
 | Peripheral        | Sensor Node GPIO | Notes                                                                               |

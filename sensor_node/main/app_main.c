@@ -1,5 +1,8 @@
 #include "app_main.h"
 
+#include <assert.h>
+#include <string.h>
+
 #include "board_pins.h"
 #include "cert_store.h"
 #include "common/net/wifi_manager.h"
@@ -20,6 +23,27 @@
 
 static const char *TAG = "sensor_main";
 
+#if !CONFIG_SENSOR_ALLOW_PLACEHOLDER_SECRETS
+#define SENSOR_STATIC_ASSERT_NOT_PLACEHOLDER(value, literal, message) _Static_assert(__builtin_strcmp(value, literal) != 0, message)
+
+SENSOR_STATIC_ASSERT_NOT_PLACEHOLDER(CONFIG_SENSOR_WS_AUTH_TOKEN, "replace-me",
+    "CONFIG_SENSOR_WS_AUTH_TOKEN must be replaced with a production token");
+SENSOR_STATIC_ASSERT_NOT_PLACEHOLDER(CONFIG_SENSOR_PROV_POP, "sensor-pop",
+    "CONFIG_SENSOR_PROV_POP must be replaced before building");
+SENSOR_STATIC_ASSERT_NOT_PLACEHOLDER(CONFIG_SENSOR_OTA_URL, "https://example.com/sensor/ota.json",
+    "CONFIG_SENSOR_OTA_URL must target the production manifest");
+#undef SENSOR_STATIC_ASSERT_NOT_PLACEHOLDER
+#endif
+
+static inline void sensor_validate_runtime_secrets(void)
+{
+#if !CONFIG_SENSOR_ALLOW_PLACEHOLDER_SECRETS
+    assert(strlen(CONFIG_SENSOR_WS_AUTH_TOKEN) > 16 && "CONFIG_SENSOR_WS_AUTH_TOKEN is too short");
+    assert(strlen(CONFIG_SENSOR_PROV_POP) > 8 && "CONFIG_SENSOR_PROV_POP is too short");
+    assert(strlen(CONFIG_SENSOR_OTA_URL) > 12 && "CONFIG_SENSOR_OTA_URL is invalid");
+#endif
+}
+
 static bool wait_for_wifi(uint32_t timeout_ms)
 {
     uint32_t elapsed = 0;
@@ -36,6 +60,8 @@ static bool wait_for_wifi(uint32_t timeout_ms)
 
 void app_main(void)
 {
+    sensor_validate_runtime_secrets();
+
     ESP_LOGI(TAG, "Booting sensor node firmware");
     ESP_ERROR_CHECK(i2c_bus_init());
 
