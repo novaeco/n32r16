@@ -1,4 +1,4 @@
-idf_component_register(SRCS "ringbuf.c" "time_sync.c" "monotonic.c" "base64_utils.c"
+idf_component_register(SRCS "ringbuf.c" "time_sync.c" "monotonic.c" "base64_utils.c" "base32_utils.c" "totp.c" "memory_profile.c"
                       INCLUDE_DIRS "."
                       REQUIRES esp_timer esp_sntp)
 

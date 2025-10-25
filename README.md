@@ -111,6 +111,13 @@ The overlays adjust flash geometry, CPU frequency, and partition tables (`partit
 `partitions/esp32c3_4MB.csv`) to maintain OTA headroom while honouring the reduced memory footprint. The default Wi-Fi and
 provisioning credentials remain identical across profiles to ease mixed deployments.
 
+## Adaptive Memory Management
+
+Both applications initialise the shared `common/util/memory_profile` helper at boot to capture chip model, flash/PSRAM geometry,
+and heap availability. The data is surfaced in the boot log and consumed by the HMI LVGL port to right-size the double-buffer:
+PSRAM-rich boards receive full-frame buffers while constrained targets fall back to fractional screen slices (minimum 40 lines).
+The helper is available to other components via `memory_profile_get()` for future dynamic allocations.
+
 ### Sensor Node Kconfig Highlights
 
 - **Ambient sensor type** (`CONFIG_SENSOR_AMBIENT_SENSOR_*`) toggles between the legacy dual SHT20 stack and the Bosch BME280 backend with full calibration handling.
@@ -134,6 +141,10 @@ provisioning credentials remain identical across profiles to ease mixed deployme
   `X-WS-Signature`. Enable `CONFIG_SENSOR_WS_ENABLE_HANDSHAKE` / `CONFIG_HMI_WS_ENABLE_HANDSHAKE` and populate
   `CONFIG_SENSOR_WS_CRYPTO_SECRET_BASE64` / `CONFIG_HMI_WS_CRYPTO_SECRET_BASE64`. Replay detection is governed by
   `CONFIG_SENSOR_WS_HANDSHAKE_TTL_MS` and `CONFIG_SENSOR_WS_HANDSHAKE_CACHE_SIZE`.
+- **TOTP two-factor header** – Enabling `CONFIG_SENSOR_WS_ENABLE_TOTP` / `CONFIG_HMI_WS_ENABLE_TOTP` requires clients to present
+  an `X-WS-TOTP` header generated from a shared Base32 secret (`*_WS_TOTP_SECRET_BASE32`). The default 30-second, 8-digit TOTP
+  profile tolerates ±1 step drift. Detailed provisioning steps live in
+  [`documentations/security_websocket_totp.md`](documentations/security_websocket_totp.md).
 - **AES-GCM payload confidentiality** – Activate `CONFIG_SENSOR_WS_ENABLE_ENCRYPTION` and `CONFIG_HMI_WS_ENABLE_ENCRYPTION` to
   wrap CRC-framed telemetry/command payloads in 256-bit AES-GCM envelopes. Ciphertext length expands by
   `WS_SECURITY_HEADER_LEN + WS_SECURITY_TAG_LEN` (28 bytes) relative to the plaintext frame.

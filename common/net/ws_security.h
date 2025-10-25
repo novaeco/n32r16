@@ -18,14 +18,26 @@ typedef struct {
     size_t secret_len;
     bool enable_encryption;
     bool enable_handshake;
+    bool enable_totp;
+    const uint8_t *totp_secret;
+    size_t totp_secret_len;
+    uint32_t totp_period_s;
+    uint8_t totp_digits;
+    uint32_t totp_window;
 } ws_security_config_t;
 
 typedef struct {
     bool handshake_enabled;
     bool encryption_enabled;
+    bool totp_enabled;
     uint8_t handshake_key[32];
     uint8_t frame_key[32];
     uint64_t tx_counter;
+    uint8_t totp_secret[64];
+    size_t totp_secret_len;
+    uint32_t totp_period_s;
+    uint8_t totp_digits;
+    uint32_t totp_window;
 } ws_security_context_t;
 
 esp_err_t ws_security_context_init(ws_security_context_t *ctx, const ws_security_config_t *config);
@@ -42,3 +54,7 @@ esp_err_t ws_security_verify_handshake(const ws_security_context_t *ctx, const u
 bool ws_security_is_encryption_enabled(const ws_security_context_t *ctx);
 bool ws_security_is_handshake_enabled(const ws_security_context_t *ctx);
 void ws_security_reset_counters(ws_security_context_t *ctx);
+bool ws_security_is_totp_enabled(const ws_security_context_t *ctx);
+uint8_t ws_security_totp_digits(const ws_security_context_t *ctx);
+esp_err_t ws_security_compute_totp(const ws_security_context_t *ctx, uint64_t unix_time, uint32_t *code);
+esp_err_t ws_security_verify_totp(const ws_security_context_t *ctx, uint64_t unix_time, uint32_t code, bool *match);

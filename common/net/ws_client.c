@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static const char *TAG = "ws_client";
 
@@ -29,6 +30,21 @@ static uint64_t s_rx_counter;
 static const char *s_token_ref;
 static size_t s_header_len;
 static bool s_handshake_enabled;
+static bool s_totp_enabled;
+static uint8_t s_totp_digits;
+static uint64_t (*s_time_fn)(void);
+
+static uint64_t get_current_unix_time(void)
+{
+    if (s_time_fn) {
+        return s_time_fn();
+    }
+    time_t now = time(NULL);
+    if (now < 0) {
+        return 0;
+    }
+    return (uint64_t)now;
+}
 
 static void bytes_to_hex(const uint8_t *in, size_t len, char *out)
 {
@@ -86,6 +102,23 @@ static esp_err_t regenerate_headers(void)
         offset += (size_t)written;
         written = snprintf(s_header_block + offset, s_header_len - offset + 1U, "X-WS-Signature: %s\r\n",
                            signature_b64);
+        if (written < 0 || (size_t)written > s_header_len - offset) {
+            return ESP_ERR_INVALID_SIZE;
+        }
+        offset += (size_t)written;
+    }
+    if (s_totp_enabled) {
+        uint32_t code = 0;
+        esp_err_t totp_err = ws_security_compute_totp(&s_security_ctx, get_current_unix_time(), &code);
+        if (totp_err != ESP_OK) {
+            return totp_err;
+        }
+        char code_buf[12];
+        int written = snprintf(code_buf, sizeof(code_buf), "%0*u", s_totp_digits, code);
+        if (written < 0 || written >= (int)sizeof(code_buf)) {
+            return ESP_ERR_INVALID_SIZE;
+        }
+        written = snprintf(s_header_block + offset, s_header_len - offset + 1U, "X-WS-TOTP: %s\r\n", code_buf);
         if (written < 0 || (size_t)written > s_header_len - offset) {
             return ESP_ERR_INVALID_SIZE;
         }
@@ -386,6 +419,9 @@ static void cleanup_client(void)
     s_token_ref = NULL;
     s_header_len = 0;
     s_handshake_enabled = false;
+    s_totp_enabled = false;
+    s_totp_digits = 0;
+    s_time_fn = NULL;
 }
 
 /**
@@ -410,6 +446,12 @@ esp_err_t ws_client_start(const ws_client_config_t *config, ws_client_rx_cb_t cb
         .secret_len = config->crypto_secret_len,
         .enable_encryption = config->enable_frame_encryption,
         .enable_handshake = config->enable_handshake_token,
+        .enable_totp = config->enable_totp,
+        .totp_secret = config->totp_secret,
+        .totp_secret_len = config->totp_secret_len,
+        .totp_period_s = config->totp_period_s,
+        .totp_digits = config->totp_digits,
+        .totp_window = config->totp_window,
     };
     esp_err_t sec_err = ws_security_context_init(&s_security_ctx, &sec_cfg);
     if (sec_err != ESP_OK) {
@@ -435,6 +477,9 @@ esp_err_t ws_client_start(const ws_client_config_t *config, ws_client_rx_cb_t cb
     const char *token = config->auth_token ? config->auth_token : "";
     const bool have_token = token[0] != '\0';
     s_handshake_enabled = ws_security_is_handshake_enabled(&s_security_ctx);
+    s_totp_enabled = ws_security_is_totp_enabled(&s_security_ctx);
+    s_totp_digits = ws_security_totp_digits(&s_security_ctx);
+    s_time_fn = config->get_time_unix;
     size_t header_len = 0;
     if (have_token) {
         header_len += strlen("Authorization: Bearer ") + strlen(token) + 2U;
@@ -442,6 +487,9 @@ esp_err_t ws_client_start(const ws_client_config_t *config, ws_client_rx_cb_t cb
     if (s_handshake_enabled) {
         header_len += strlen("X-WS-Nonce: ") + (WS_SECURITY_NONCE_LEN * 2U) + 2U;
         header_len += strlen("X-WS-Signature: ") + 44U + 2U;
+    }
+    if (s_totp_enabled && s_totp_digits > 0) {
+        header_len += strlen("X-WS-TOTP: ") + s_totp_digits + 2U;
     }
     s_token_ref = token;
     s_header_len = header_len;

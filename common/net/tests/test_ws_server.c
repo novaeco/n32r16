@@ -40,6 +40,12 @@ static size_t s_last_payload_len;
 static int s_register_uri_calls;
 static int s_register_hook_calls;
 static TickType_t s_fake_tick_count;
+static uint64_t s_fake_time_unix;
+
+static uint64_t fake_time_unix(void)
+{
+    return s_fake_time_unix;
+}
 
 static esp_err_t fake_httpd_ssl_start(httpd_handle_t *handle, const httpd_ssl_config_t *config)
 {
@@ -270,6 +276,7 @@ static void reset_state(void)
     s_register_hook_calls = 0;
     s_fake_tick_count = 0;
     s_last_payload_len = 0;
+    s_fake_time_unix = 0;
 }
 
 void setUp(void)
@@ -355,4 +362,39 @@ TEST_CASE("ws server drops clients when send fails", "[net][ws]")
     TEST_ASSERT_EQUAL(ESP_FAIL, ws_server_send(payload, sizeof(payload)));
     TEST_ASSERT_EQUAL(1, s_sess_close_calls);
     TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)ws_server_active_client_count());
+}
+
+TEST_CASE("ws server validates totp configuration", "[net][ws]")
+{
+    uint8_t cert[] = {0x01};
+    uint8_t key[] = {0x02};
+    ws_server_config_t invalid = {
+        .port = 9443,
+        .server_cert = cert,
+        .server_cert_len = sizeof(cert),
+        .server_key = key,
+        .server_key_len = sizeof(key),
+        .enable_totp = true,
+        .totp_period_s = 30,
+        .totp_digits = 6,
+    };
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, ws_server_start(&invalid, NULL, NULL));
+
+    uint8_t totp_secret[] = {0x10, 0x11, 0x12, 0x13};
+    ws_server_config_t valid = {
+        .port = 9443,
+        .server_cert = cert,
+        .server_cert_len = sizeof(cert),
+        .server_key = key,
+        .server_key_len = sizeof(key),
+        .enable_totp = true,
+        .totp_secret = totp_secret,
+        .totp_secret_len = sizeof(totp_secret),
+        .totp_period_s = 30,
+        .totp_digits = 6,
+        .totp_window = 1,
+        .get_time_unix = fake_time_unix,
+    };
+    TEST_ASSERT_EQUAL(ESP_OK, ws_server_start(&valid, NULL, NULL));
+    ws_server_stop();
 }

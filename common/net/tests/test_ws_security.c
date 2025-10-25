@@ -73,3 +73,34 @@ TEST_CASE("ws security validates handshake signatures", "[net][ws]")
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_RESPONSE,
                       ws_security_verify_handshake(&ctx, nonce, sizeof(nonce), token, signature, sizeof(signature)));
 }
+
+TEST_CASE("ws security computes and verifies totp codes", "[net][ws]")
+{
+    static const uint8_t secret[] = "12345678901234567890";
+    ws_security_config_t cfg = {
+        .secret = NULL,
+        .secret_len = 0,
+        .enable_encryption = false,
+        .enable_handshake = false,
+        .enable_totp = true,
+        .totp_secret = secret,
+        .totp_secret_len = sizeof(secret) - 1U,
+        .totp_period_s = 30,
+        .totp_digits = 8,
+        .totp_window = 1,
+    };
+    ws_security_context_t ctx = {0};
+    TEST_ASSERT_EQUAL(ESP_OK, ws_security_context_init(&ctx, &cfg));
+
+    uint32_t code = 0;
+    TEST_ASSERT_EQUAL(ESP_OK, ws_security_compute_totp(&ctx, 59, &code));
+    TEST_ASSERT_EQUAL_UINT32(94287082, code);
+
+    bool match = false;
+    TEST_ASSERT_EQUAL(ESP_OK, ws_security_verify_totp(&ctx, 59, code, &match));
+    TEST_ASSERT_TRUE(match);
+
+    match = true;
+    TEST_ASSERT_EQUAL(ESP_OK, ws_security_verify_totp(&ctx, 59, 11111111, &match));
+    TEST_ASSERT_FALSE(match);
+}

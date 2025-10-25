@@ -4,6 +4,7 @@
 #include "common/net/wifi_manager.h"
 #include "common/net/ws_client.h"
 #include "common/proto/messages.h"
+#include "common/util/base32_utils.h"
 #include "common/util/base64_utils.h"
 #include "common/util/monotonic.h"
 #include "prefs_store.h"
@@ -37,6 +38,8 @@ static bool s_sec2_loaded;
 static bool s_wifi_ready;
 static uint8_t s_ws_secret[64];
 static size_t s_ws_secret_len;
+static uint8_t s_totp_secret[64];
+static size_t s_totp_secret_len;
 
 #define DISCOVERY_CACHE_NAMESPACE "hmi_net"
 #define DISCOVERY_CACHE_URI_KEY "last_uri"
@@ -491,8 +494,18 @@ esp_err_t hmi_ws_client_start(hmi_data_model_t *model)
     }
     const bool enable_encryption = IS_ENABLED(CONFIG_HMI_WS_ENABLE_ENCRYPTION);
     const bool enable_handshake = IS_ENABLED(CONFIG_HMI_WS_ENABLE_HANDSHAKE);
+    const bool enable_totp = IS_ENABLED(CONFIG_HMI_WS_ENABLE_TOTP);
     if ((enable_encryption || enable_handshake) && s_ws_secret_len == 0) {
         ESP_LOGE(TAG, "WebSocket security enabled but secret is empty");
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_totp_secret_len = 0;
+    if (CONFIG_HMI_WS_TOTP_SECRET_BASE32[0] != '\0') {
+        ESP_ERROR_CHECK(
+            base32_utils_decode(CONFIG_HMI_WS_TOTP_SECRET_BASE32, s_totp_secret, sizeof(s_totp_secret), &s_totp_secret_len));
+    }
+    if (enable_totp && s_totp_secret_len == 0) {
+        ESP_LOGE(TAG, "TOTP enabled but secret is empty");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -511,6 +524,12 @@ esp_err_t hmi_ws_client_start(hmi_data_model_t *model)
         .crypto_secret_len = s_ws_secret_len,
         .enable_frame_encryption = enable_encryption,
         .enable_handshake_token = enable_handshake,
+        .enable_totp = enable_totp,
+        .totp_secret = s_totp_secret_len > 0 ? s_totp_secret : NULL,
+        .totp_secret_len = s_totp_secret_len,
+        .totp_period_s = CONFIG_HMI_WS_TOTP_PERIOD_S,
+        .totp_digits = CONFIG_HMI_WS_TOTP_DIGITS,
+        .totp_window = CONFIG_HMI_WS_TOTP_WINDOW,
     };
     esp_err_t start_err = ws_client_start(&cfg, ws_rx, NULL);
     if (start_err == ESP_ERR_INVALID_STATE) {

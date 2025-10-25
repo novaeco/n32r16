@@ -6,6 +6,7 @@
 #include "common/net/ws_security.h"
 #include "common/proto/messages.h"
 #include "common/util/base64_utils.h"
+#include "common/util/base32_utils.h"
 #include "common/util/monotonic.h"
 #include "cert_store.h"
 #include "esp_log.h"
@@ -23,6 +24,8 @@ static uint8_t s_sec2_salt[32];
 static uint8_t s_sec2_verifier[384];
 static uint8_t s_ws_secret[64];
 static size_t s_ws_secret_len;
+static uint8_t s_totp_secret[64];
+static size_t s_totp_secret_len;
 static wifi_manager_sec2_params_t s_sec2_params = {
     .salt = s_sec2_salt,
     .verifier = s_sec2_verifier,
@@ -72,8 +75,18 @@ void sensor_ws_server_start(sensor_data_model_t *model)
     }
     const bool enable_encryption = IS_ENABLED(CONFIG_SENSOR_WS_ENABLE_ENCRYPTION);
     const bool enable_handshake = IS_ENABLED(CONFIG_SENSOR_WS_ENABLE_HANDSHAKE);
+    const bool enable_totp = IS_ENABLED(CONFIG_SENSOR_WS_ENABLE_TOTP);
     if ((enable_encryption || enable_handshake) && s_ws_secret_len == 0) {
         ESP_LOGE(TAG, "WebSocket security enabled but secret is empty");
+        abort();
+    }
+    s_totp_secret_len = 0;
+    if (CONFIG_SENSOR_WS_TOTP_SECRET_BASE32[0] != '\0') {
+        ESP_ERROR_CHECK(
+            base32_utils_decode(CONFIG_SENSOR_WS_TOTP_SECRET_BASE32, s_totp_secret, sizeof(s_totp_secret), &s_totp_secret_len));
+    }
+    if (enable_totp && s_totp_secret_len == 0) {
+        ESP_LOGE(TAG, "TOTP enabled but secret is empty");
         abort();
     }
 
@@ -123,6 +136,12 @@ void sensor_ws_server_start(sensor_data_model_t *model)
         .enable_handshake_token = enable_handshake,
         .handshake_replay_window_ms = CONFIG_SENSOR_WS_HANDSHAKE_TTL_MS,
         .handshake_cache_size = CONFIG_SENSOR_WS_HANDSHAKE_CACHE_SIZE,
+        .enable_totp = enable_totp,
+        .totp_secret = s_totp_secret_len > 0 ? s_totp_secret : NULL,
+        .totp_secret_len = s_totp_secret_len,
+        .totp_period_s = CONFIG_SENSOR_WS_TOTP_PERIOD_S,
+        .totp_digits = CONFIG_SENSOR_WS_TOTP_DIGITS,
+        .totp_window = CONFIG_SENSOR_WS_TOTP_WINDOW,
     };
     ESP_ERROR_CHECK(ws_server_start(&ws_cfg, ws_rx, NULL));
 }

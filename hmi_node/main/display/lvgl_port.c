@@ -11,6 +11,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "common/util/memory_profile.h"
 #include <stdlib.h>
 
 static const char *TAG = "lvgl_port";
@@ -73,14 +74,14 @@ esp_err_t lvgl_port_init(void)
 
     lv_init();
 
-    size_t draw_buf_size = 1024 * 40;
-    s_buf1 = heap_caps_malloc(draw_buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    s_buf2 = heap_caps_malloc(draw_buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    size_t draw_buf_pixels = memory_profile_recommend_draw_buffer_px(1024, 600, 40);
+    s_buf1 = heap_caps_malloc(draw_buf_pixels * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_buf2 = heap_caps_malloc(draw_buf_pixels * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_buf1 || !s_buf2) {
         ESP_LOGE(TAG, "Failed to allocate LVGL buffers");
         return ESP_ERR_NO_MEM;
     }
-    lv_disp_draw_buf_init(&s_draw_buf, s_buf1, s_buf2, draw_buf_size);
+    lv_disp_draw_buf_init(&s_draw_buf, s_buf1, s_buf2, draw_buf_pixels);
 
     lv_disp_drv_init(&s_disp_drv);
     s_disp_drv.hor_res = 1024;
