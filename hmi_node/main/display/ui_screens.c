@@ -163,6 +163,14 @@ static void dispatch_apply_preferences(const char *ssid, const char *password, c
     s_callbacks.apply_preferences(&prefs, s_callback_ctx);
 }
 
+static void dispatch_reset_preferences(void)
+{
+    if (!s_callbacks.reset_preferences) {
+        return;
+    }
+    s_callbacks.reset_preferences(s_callback_ctx);
+}
+
 static void gpio_switch_event_cb(lv_event_t *e)
 {
     if (s_updating_ui) {
@@ -225,6 +233,14 @@ static void prefs_apply_event_cb(lv_event_t *e)
     bool dark = lv_obj_has_state(s_theme_switch, LV_STATE_CHECKED);
     bool fahrenheit = lv_obj_has_state(s_units_switch, LV_STATE_CHECKED);
     dispatch_apply_preferences(ssid, password, mdns, dark, fahrenheit);
+}
+
+static void prefs_reset_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+        return;
+    }
+    dispatch_reset_preferences();
 }
 
 static lv_obj_t *create_card(lv_obj_t *parent, const char *title)
@@ -513,11 +529,17 @@ static void create_settings_tab(lv_obj_t *tab)
     lv_label_set_text(units_label, "Use °F");
     s_units_switch = lv_switch_create(units_col);
 
-    lv_obj_t *save_btn = lv_btn_create(tab);
-    lv_obj_set_size(save_btn, 140, 48);
-    lv_obj_add_event_cb(save_btn, prefs_apply_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *btn_label = lv_label_create(save_btn);
+    lv_obj_t *btn_apply = lv_btn_create(tab);
+    lv_obj_set_size(btn_apply, 140, 48);
+    lv_obj_add_event_cb(btn_apply, prefs_apply_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *btn_label = lv_label_create(btn_apply);
     lv_label_set_text(btn_label, "Apply");
+
+    lv_obj_t *btn_reset = lv_btn_create(tab);
+    lv_obj_set_size(btn_reset, 140, 48);
+    lv_obj_add_event_cb(btn_reset, prefs_reset_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *reset_label = lv_label_create(btn_reset);
+    lv_label_set_text(reset_label, "Reset");
 }
 
 void ui_init(const ui_callbacks_t *callbacks, void *ctx)
@@ -773,5 +795,10 @@ void ui_test_apply_preferences_inputs(const char *ssid, const char *password, co
                                       bool fahrenheit)
 {
     dispatch_apply_preferences(ssid, password, mdns, dark, fahrenheit);
+}
+
+void ui_test_trigger_reset_preferences(void)
+{
+    dispatch_reset_preferences();
 }
 #endif

@@ -27,12 +27,17 @@ static struct {
     int calls;
 } s_prefs_invocation;
 
+static struct {
+    int calls;
+} s_reset_invocation;
+
 static void reset_state(void)
 {
     memset(&s_gpio_invocation, 0, sizeof(s_gpio_invocation));
     memset(&s_pwm_invocation, 0, sizeof(s_pwm_invocation));
     memset(&s_pwm_freq_invocation, 0, sizeof(s_pwm_freq_invocation));
     memset(&s_prefs_invocation, 0, sizeof(s_prefs_invocation));
+    memset(&s_reset_invocation, 0, sizeof(s_reset_invocation));
 }
 
 static void fake_write_gpio(uint8_t device_index, uint8_t port, uint16_t mask, uint16_t value, void *ctx)
@@ -67,6 +72,12 @@ static void fake_apply_prefs(const hmi_user_preferences_t *prefs, void *ctx)
     ++s_prefs_invocation.calls;
 }
 
+static void fake_reset_prefs(void *ctx)
+{
+    (void)ctx;
+    ++s_reset_invocation.calls;
+}
+
 void setUp(void)
 {
     reset_state();
@@ -75,6 +86,7 @@ void setUp(void)
         .set_pwm_frequency = fake_set_pwm_frequency,
         .write_gpio = fake_write_gpio,
         .apply_preferences = fake_apply_prefs,
+        .reset_preferences = fake_reset_prefs,
     };
     ui_set_callbacks_for_test(&callbacks, NULL);
     hmi_user_preferences_t defaults = {
@@ -127,4 +139,10 @@ TEST_CASE("ui preferences dispatcher merges and forwards", "[hmi][ui]")
     TEST_ASSERT_EQUAL_STRING("target", s_prefs_invocation.prefs.mdns_target);
     TEST_ASSERT_TRUE(s_prefs_invocation.prefs.dark_theme);
     TEST_ASSERT_TRUE(s_prefs_invocation.prefs.use_fahrenheit);
+}
+
+TEST_CASE("ui reset preferences dispatches callback", "[hmi][ui]")
+{
+    ui_test_trigger_reset_preferences();
+    TEST_ASSERT_EQUAL(1, s_reset_invocation.calls);
 }

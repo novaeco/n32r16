@@ -33,3 +33,4 @@ void hmi_data_model_set_crc_status(hmi_data_model_t *model, bool ok);
 bool hmi_data_model_get_crc_status(const hmi_data_model_t *model);
 void hmi_data_model_get_preferences(const hmi_data_model_t *model, hmi_user_preferences_t *out);
 void hmi_data_model_set_preferences(hmi_data_model_t *model, const hmi_user_preferences_t *prefs);
+void hmi_data_model_reset_preferences(hmi_data_model_t *model);

@@ -11,6 +11,7 @@ typedef struct {
     void (*set_pwm_frequency)(uint16_t frequency, void *ctx);
     void (*write_gpio)(uint8_t device_index, uint8_t port, uint16_t mask, uint16_t value, void *ctx);
     void (*apply_preferences)(const hmi_user_preferences_t *prefs, void *ctx);
+    void (*reset_preferences)(void *ctx);
 } ui_callbacks_t;
 
 void ui_init(const ui_callbacks_t *callbacks, void *ctx);
@@ -28,4 +29,5 @@ void ui_test_handle_pwm_slider(uint8_t channel, uint16_t value);
 void ui_test_handle_pwm_frequency(uint16_t freq);
 void ui_test_apply_preferences_inputs(const char *ssid, const char *password, const char *mdns, bool dark,
                                       bool fahrenheit);
+void ui_test_trigger_reset_preferences(void);
 #endif

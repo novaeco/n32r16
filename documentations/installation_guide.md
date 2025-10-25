@@ -198,6 +198,16 @@ git submodule update --init --recursive
   ```
 - Conserver la cohérence des options mDNS (`CONFIG_HMI_SENSOR_HOSTNAME`) et des ports WebSocket/TLS.
 - Nouvel interrupteur booléen : `CONFIG_SENSOR_PROV_PREFER_BLE` et `CONFIG_HMI_PROV_PREFER_BLE`
+
+### Persistance des préférences HMI (NVS chiffré)
+- Les préférences utilisateur (SSID, mot de passe Wi-Fi, hôte mDNS, thème/UI) sont sérialisées via `nvs_flash_secure` dans la partition
+  `nvs` (24 KiB dans `partitions/default_16MB_psram_32MB_flash_opi.csv`). Gardez une marge de 4 KiB pour la gestion interne NVS : toute
+  extension du struct `hmi_user_preferences_t` doit rester < 20 KiB sinon l'écriture échouera (`ESP_ERR_NVS_PAGE_FULL`).
+- Le chiffrement dépend de la partition `nvs_keys` : après effacement total (`idf.py erase-flash`), exécutez un premier boot pour régénérer
+  les clés (le firmware les produit automatiquement au besoin). Sans cette partition ou en cas de corruption, la persistance sera
+  désactivée et un log `Failed to init preferences store` apparaîtra.
+- Le bouton **Reset** de l'onglet *Settings* efface le blob NVS (`nvs_erase_key`) et recharge les valeurs par défaut en RAM. Documentez
+  cette opération pour vos utilisateurs finaux : l'action n'efface pas les autres espaces NVS (provisionnement Wi-Fi, OTA).
   permettent de privilégier l'initialisation du schéma de provisioning BLE. En cas
   d'indisponibilité du contrôleur Bluetooth (manque de mémoire, module sans BLE,
   désactivation menuconfig), le firmware repasse automatiquement sur SoftAP sans
