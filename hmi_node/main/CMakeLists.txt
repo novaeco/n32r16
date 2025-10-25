@@ -1,6 +1,7 @@
 idf_component_register(SRCS
     "app_main.c"
     "data_model.c"
+    "prefs_store.c"
     "display/lvgl_port.c"
     "display/ui_screens.c"
     "net/ws_client.c"

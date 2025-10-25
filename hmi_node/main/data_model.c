@@ -2,10 +2,15 @@
 
 #include <string.h>
 
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#include "prefs_store.h"
+
 #define HMI_MODEL_LOCK_TIMEOUT pdMS_TO_TICKS(1000)
+
+static const char *TAG = "data_model";
 
 static inline bool hmi_model_lock(hmi_data_model_t *model)
 {
@@ -19,15 +24,28 @@ static inline void hmi_model_unlock(hmi_data_model_t *model)
     }
 }
 
-static void hmi_data_model_set_defaults(hmi_data_model_t *model)
+static void sanitize_preferences(hmi_user_preferences_t *prefs)
 {
-    model->preferences.dark_theme = true;
-    model->preferences.use_fahrenheit = false;
-    model->preferences.ssid[0] = '\0';
-    model->preferences.password[0] = '\0';
-    strncpy(model->preferences.mdns_target, "sensor-node.local", sizeof(model->preferences.mdns_target) - 1);
-    model->preferences.mdns_target[sizeof(model->preferences.mdns_target) - 1] = '\0';
-    model->last_crc_ok = true;
+    if (!prefs) {
+        return;
+    }
+    prefs->ssid[sizeof(prefs->ssid) - 1] = '\0';
+    prefs->password[sizeof(prefs->password) - 1] = '\0';
+    prefs->mdns_target[sizeof(prefs->mdns_target) - 1] = '\0';
+}
+
+static void hmi_data_model_set_default_preferences(hmi_user_preferences_t *prefs)
+{
+    if (!prefs) {
+        return;
+    }
+    prefs->dark_theme = true;
+    prefs->use_fahrenheit = false;
+    prefs->ssid[0] = '\0';
+    prefs->password[0] = '\0';
+    strncpy(prefs->mdns_target, "sensor-node.local", sizeof(prefs->mdns_target) - 1);
+    prefs->mdns_target[sizeof(prefs->mdns_target) - 1] = '\0';
+    sanitize_preferences(prefs);
 }
 
 void hmi_data_model_init(hmi_data_model_t *model)
@@ -35,7 +53,25 @@ void hmi_data_model_init(hmi_data_model_t *model)
     memset(model, 0, sizeof(*model));
     model->mutex = xSemaphoreCreateMutexStatic(&model->mutex_storage);
     configASSERT(model->mutex != NULL);
-    hmi_data_model_set_defaults(model);
+    hmi_data_model_set_default_preferences(&model->preferences);
+    model->last_crc_ok = true;
+
+    esp_err_t err = hmi_prefs_store_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to init preferences store: %s", esp_err_to_name(err));
+        return;
+    }
+
+    hmi_user_preferences_t stored = {0};
+    err = hmi_prefs_store_load(&stored);
+    if (err == ESP_OK) {
+        sanitize_preferences(&stored);
+        model->preferences = stored;
+    } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "No stored preferences, using defaults");
+    } else {
+        ESP_LOGW(TAG, "Failed to load preferences: %s", esp_err_to_name(err));
+    }
 }
 
 void hmi_data_model_set_update(hmi_data_model_t *model, const proto_sensor_update_t *update)
@@ -164,5 +200,17 @@ void hmi_data_model_set_preferences(hmi_data_model_t *model, const hmi_user_pref
     model->preferences.mdns_target[sizeof(model->preferences.mdns_target) - 1] = '\0';
     model->preferences.dark_theme = prefs->dark_theme;
     model->preferences.use_fahrenheit = prefs->use_fahrenheit;
+    hmi_model_unlock(model);
+}
+
+void hmi_data_model_reset_preferences(hmi_data_model_t *model)
+{
+    if (!model) {
+        return;
+    }
+    if (!hmi_model_lock(model)) {
+        return;
+    }
+    hmi_data_model_set_default_preferences(&model->preferences);
     hmi_model_unlock(model);
 }

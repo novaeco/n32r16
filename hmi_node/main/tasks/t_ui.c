@@ -3,12 +3,15 @@
 #include "display/lvgl_port.h"
 #include "display/ui_screens.h"
 #include "common/proto/messages.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "net/ws_client.h"
+#include "prefs_store.h"
 
 static hmi_data_model_t *s_model;
 static hmi_user_preferences_t s_prefs;
+static const char *TAG = "ui_task";
 
 static void ui_cb_set_pwm(uint8_t channel, uint16_t duty, void *ctx)
 {
@@ -56,7 +59,25 @@ static void ui_cb_apply_prefs(const hmi_user_preferences_t *prefs, void *ctx)
     }
     s_prefs = *prefs;
     hmi_data_model_set_preferences(s_model, &s_prefs);
+    esp_err_t err = hmi_prefs_store_save(&s_prefs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save preferences: %s", esp_err_to_name(err));
+    }
     ui_apply_preferences(&s_prefs);
+}
+
+static void ui_cb_reset_prefs(void *ctx)
+{
+    (void)ctx;
+    hmi_data_model_reset_preferences(s_model);
+    hmi_data_model_get_preferences(s_model, &s_prefs);
+    ui_apply_preferences(&s_prefs);
+    esp_err_t err = hmi_prefs_store_erase();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to erase preferences: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "Preferences cleared");
+    }
 }
 
 static void ui_task(void *arg)
@@ -67,6 +88,7 @@ static void ui_task(void *arg)
         .set_pwm_frequency = ui_cb_set_pwm_freq,
         .write_gpio = ui_cb_write_gpio,
         .apply_preferences = ui_cb_apply_prefs,
+        .reset_preferences = ui_cb_reset_prefs,
     };
 
     lvgl_port_init();
