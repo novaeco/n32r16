@@ -30,7 +30,7 @@ void data_model_init(sensor_data_model_t *model)
 }
 
 void data_model_set_sht20(sensor_data_model_t *model, size_t index, const char *id, float temp,
-                          float humidity)
+                          float humidity, bool valid)
 {
     if (!model || !model->initialized || index >= 2) {
         return;
@@ -43,6 +43,7 @@ void data_model_set_sht20(sensor_data_model_t *model, size_t index, const char *
     entry->id[sizeof(entry->id) - 1] = '\0';
     entry->temperature_c = temp;
     entry->humidity_percent = humidity;
+    entry->valid = valid;
     if (index + 1 > model->current.sht20_count) {
         model->current.sht20_count = index + 1;
     }

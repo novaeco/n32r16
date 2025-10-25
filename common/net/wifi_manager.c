@@ -14,7 +14,8 @@
 #include "wifi_provisioning/manager.h"
 #include "wifi_provisioning/scheme_ble.h"
 #include "wifi_provisioning/scheme_softap.h"
-#include "wifi_provisioning/security1.h"
+#include "wifi_provisioning/security2.h"
+#include <limits.h>
 #include <string.h>
 
 #define WIFI_CONNECTED_BIT BIT0
@@ -179,6 +180,12 @@ esp_err_t wifi_manager_prepare_provisioning(const wifi_manager_config_t *config,
         return ESP_ERR_INVALID_ARG;
     }
 
+    if (!config->sec2_params || !config->sec2_params->salt || !config->sec2_params->verifier ||
+        config->sec2_params->salt_len == 0 || config->sec2_params->verifier_len == 0) {
+        ESP_LOGE(TAG, "Security2 parameters missing");
+        return ESP_ERR_INVALID_ARG;
+    }
+
     wifi_prov_mgr_config_t prov_cfg = {
         .scheme = wifi_prov_scheme_softap,
         .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE,
@@ -238,7 +245,13 @@ esp_err_t wifi_manager_start(const wifi_manager_config_t *config)
     ESP_ERROR_CHECK(ensure_netif());
 
     wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&wifi_cfg));
+    esp_err_t wifi_init_err = esp_wifi_init(&wifi_cfg);
+    if (wifi_init_err == ESP_ERR_WIFI_INIT_STATE) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (wifi_init_err != ESP_OK) {
+        return wifi_init_err;
+    }
 
     if (!s_wifi_event_group) {
         s_wifi_event_group = xEventGroupCreate();
@@ -269,20 +282,36 @@ esp_err_t wifi_manager_start(const wifi_manager_config_t *config)
         char service_name[20] = {0};
         format_service_name(config, service_name, sizeof(service_name));
         const char *service_key = config->service_key ? config->service_key : "provision";
-        const char *pop = config->pop ? config->pop : "pop";
-        wifi_prov_security1_params_t pop_params = {
-            .data = (const uint8_t *)pop,
-            .len = strlen(pop),
-        };
-        ESP_LOGI(TAG, "Starting provisioning SSID=%s", service_name);
-        ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, &pop_params, service_name, service_key));
-
-        EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_PROV_DONE_BIT,
-                                               pdTRUE, pdFALSE, portMAX_DELAY);
-        if (!(bits & WIFI_PROV_DONE_BIT)) {
-            ESP_LOGE(TAG, "Provisioning aborted");
+        if (strlen(service_key) < 8) {
+            ESP_LOGW(TAG, "Provisioning service key '%s' shorter than WPA2 minimum", service_key);
+        }
+        if (config->sec2_params->salt_len > UINT16_MAX || config->sec2_params->verifier_len > UINT16_MAX) {
             wifi_prov_mgr_deinit();
-            return ESP_FAIL;
+            return ESP_ERR_INVALID_SIZE;
+        }
+        wifi_prov_security2_params_t sec2_params = {
+            .salt = config->sec2_params->salt,
+            .salt_len = (uint16_t)config->sec2_params->salt_len,
+            .verifier = config->sec2_params->verifier,
+            .verifier_len = (uint16_t)config->sec2_params->verifier_len,
+        };
+        if (config->sec2_username && config->sec2_username[0] != '\0') {
+            ESP_ERROR_CHECK(wifi_prov_mgr_set_security2_username(config->sec2_username));
+        }
+        ESP_LOGI(TAG, "Starting provisioning SSID=%s (Security2)", service_name);
+        if (config->sec2_username && config->sec2_username[0] != '\0') {
+            ESP_LOGI(TAG, "Provisioning username: %s", config->sec2_username);
+        }
+        ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_2, &sec2_params, service_name, service_key));
+
+        TickType_t prov_ticks = config->provisioning_timeout_ms ? pdMS_TO_TICKS(config->provisioning_timeout_ms) : portMAX_DELAY;
+        EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_PROV_DONE_BIT,
+                                               pdTRUE, pdFALSE, prov_ticks);
+        if (!(bits & WIFI_PROV_DONE_BIT)) {
+            ESP_LOGE(TAG, "Provisioning timed out");
+            wifi_prov_mgr_stop_provisioning();
+            wifi_prov_mgr_deinit();
+            return ESP_ERR_TIMEOUT;
         }
         s_force_reprovision = false;
     } else {
@@ -296,13 +325,39 @@ esp_err_t wifi_manager_start(const wifi_manager_config_t *config)
     ESP_ERROR_CHECK(esp_wifi_set_ps(config->power_save ? WIFI_PS_MAX_MODEM : WIFI_PS_NONE));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT,
-                                           pdFALSE, pdFALSE, portMAX_DELAY);
-    if (!(bits & WIFI_CONNECTED_BIT)) {
-        ESP_LOGE(TAG, "Failed to connect to provisioned network");
-        return ESP_FAIL;
+    xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+    uint32_t connect_timeout_ms = config->connect_timeout_ms;
+    TickType_t wait_ticks = connect_timeout_ms ? pdMS_TO_TICKS(connect_timeout_ms) : portMAX_DELAY;
+    uint32_t attempts = 0;
+
+    while (true) {
+        EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                               pdTRUE, pdFALSE, wait_ticks);
+        if (bits & WIFI_CONNECTED_BIT) {
+            return ESP_OK;
+        }
+        bool counted = false;
+        if (bits == 0) {
+            if (connect_timeout_ms > 0) {
+                ESP_LOGW(TAG, "Wi-Fi connect timed out after %u ms", (unsigned)connect_timeout_ms);
+            } else {
+                ESP_LOGW(TAG, "Wi-Fi connect wait timed out");
+            }
+            counted = true;
+            esp_wifi_disconnect();
+            esp_wifi_connect();
+        } else if (bits & WIFI_FAIL_BIT) {
+            ESP_LOGW(TAG, "Wi-Fi connect attempt %u failed", (unsigned)(attempts + 1));
+            counted = true;
+        }
+        if (counted) {
+            ++attempts;
+            if (config->max_connect_attempts && attempts >= config->max_connect_attempts) {
+                ESP_LOGE(TAG, "Failed to connect after %u attempts", (unsigned)attempts);
+                return ESP_ERR_TIMEOUT;
+            }
+        }
     }
-    return ESP_OK;
 }
 
 /**

@@ -2,6 +2,15 @@
 
 #include "esp_err.h"
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct {
+    const uint8_t *salt;
+    size_t salt_len;
+    const uint8_t *verifier;
+    size_t verifier_len;
+} wifi_manager_sec2_params_t;
 
 typedef struct {
     bool power_save;
@@ -10,6 +19,11 @@ typedef struct {
     const char *service_key;
     bool prefer_ble;
     bool force_provisioning;
+    uint32_t provisioning_timeout_ms;
+    uint32_t connect_timeout_ms;
+    uint8_t max_connect_attempts;
+    const wifi_manager_sec2_params_t *sec2_params;
+    const char *sec2_username;
 } wifi_manager_config_t;
 
 esp_err_t wifi_manager_start(const wifi_manager_config_t *config);

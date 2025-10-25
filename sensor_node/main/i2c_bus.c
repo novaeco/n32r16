@@ -196,6 +196,9 @@ static void i2c_bus_scan(void)
             expected[saddr] = true;
             logical_instances[saddr]++;
         }
+        if (map->ambient[i].mux_channel != IO_MUX_CHANNEL_NONE && map->ambient[i].mux_address) {
+            expected[map->ambient[i].mux_address & 0x7F] = true;
+        }
     }
     for (size_t i = 0; i < 2; ++i) {
         uint8_t mcp = map->mcp23017_addresses[i] & 0x7F;
@@ -225,8 +228,19 @@ static void i2c_bus_scan(void)
             ESP_LOGW(TAG, "Unexpected device present at 0x%02X", addr);
         }
         if (logical_instances[addr] > 1) {
-            ESP_LOGW(TAG, "Multiple logical peripherals mapped to 0x%02X; ensure external gating is configured",
-                     addr);
+            bool gated = false;
+            for (size_t i = 0; i < map->ambient_count && i < IO_MAX_AMBIENT_SENSORS; ++i) {
+                if ((map->ambient[i].address & 0x7F) == addr &&
+                    map->ambient[i].mux_channel != IO_MUX_CHANNEL_NONE) {
+                    gated = true;
+                    break;
+                }
+            }
+            if (!gated) {
+                ESP_LOGW(TAG,
+                         "Multiple logical peripherals mapped to 0x%02X without multiplexer gating configured",
+                         addr);
+            }
         }
     }
 }

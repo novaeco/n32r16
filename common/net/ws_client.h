@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 typedef void (*ws_client_rx_cb_t)(const uint8_t *data, size_t len, uint32_t crc32, void *ctx);
+typedef void (*ws_client_error_cb_t)(const esp_websocket_event_data_t *event, void *ctx);
 
 typedef struct {
     const char *uri;
@@ -20,6 +21,8 @@ typedef struct {
     uint32_t reconnect_min_delay_ms;
     uint32_t reconnect_max_delay_ms;
     const char *tls_server_name;
+    ws_client_error_cb_t error_cb;
+    void *error_ctx;
 } ws_client_config_t;
 
 typedef struct {

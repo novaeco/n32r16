@@ -51,8 +51,9 @@ static bool encode_sensor_update_json_into(const proto_sensor_update_t *msg, uin
     for (size_t i = 0; i < msg->sht20_count; ++i) {
         const proto_sht20_reading_t *entry = &msg->sht20[i];
         if (!json_append(&cursor, &remaining,
-                         "%s{\"id\":\"%s\",\"t\":%.2f,\"rh\":%.2f}",
-                         i > 0 ? "," : "", entry->id, entry->temperature_c, entry->humidity_percent)) {
+                         "%s{\"id\":\"%s\",\"t\":%.2f,\"rh\":%.2f,\"ok\":%s}",
+                         i > 0 ? "," : "", entry->id, entry->temperature_c, entry->humidity_percent,
+                         entry->valid ? "true" : "false")) {
             return false;
         }
     }
@@ -166,13 +167,15 @@ static bool encode_sensor_update_cbor_into(const proto_sensor_update_t *msg, uin
     CBOR_CHECK(cbor_encoder_create_array(&map, &sht_arr, msg->sht20_count));
     for (size_t i = 0; i < msg->sht20_count; ++i) {
         CborEncoder item;
-        CBOR_CHECK(cbor_encoder_create_map(&sht_arr, &item, 3));
+        CBOR_CHECK(cbor_encoder_create_map(&sht_arr, &item, 4));
         CBOR_CHECK(cbor_encode_text_stringz(&item, "id"));
         CBOR_CHECK(cbor_encode_text_stringz(&item, msg->sht20[i].id));
         CBOR_CHECK(cbor_encode_text_stringz(&item, "t"));
         CBOR_CHECK(cbor_encode_float(&item, msg->sht20[i].temperature_c));
         CBOR_CHECK(cbor_encode_text_stringz(&item, "rh"));
         CBOR_CHECK(cbor_encode_float(&item, msg->sht20[i].humidity_percent));
+        CBOR_CHECK(cbor_encode_text_stringz(&item, "ok"));
+        CBOR_CHECK(cbor_encode_boolean(&item, msg->sht20[i].valid));
         CBOR_CHECK(cbor_encoder_close_container(&sht_arr, &item));
     }
     CBOR_CHECK(cbor_encoder_close_container(&map, &sht_arr));
@@ -573,6 +576,7 @@ bool proto_decode_sensor_update(const uint8_t *payload, size_t payload_len, bool
                 }
                 size_t idx = 0;
                 while (!cbor_value_at_end(&arr) && idx < 2) {
+                    out_msg->sht20[idx].valid = false;
                     CborValue item;
                     if (cbor_value_enter_container(&arr, &item) != CborNoError) {
                         return false;
@@ -594,6 +598,12 @@ bool proto_decode_sensor_update(const uint8_t *payload, size_t payload_len, bool
                             double val;
                             cbor_value_get_double(&item, &val);
                             out_msg->sht20[idx].humidity_percent = (float)val;
+                        } else if (!strcmp(sub, "ok")) {
+                            bool ok = false;
+                            if (cbor_value_get_boolean(&item, &ok) != CborNoError) {
+                                return false;
+                            }
+                            out_msg->sht20[idx].valid = ok;
                         }
                         cbor_value_advance(&item);
                     }
@@ -751,11 +761,13 @@ bool proto_decode_sensor_update(const uint8_t *payload, size_t payload_len, bool
             const cJSON *id = cJSON_GetObjectItem(item, "id");
             const cJSON *t = cJSON_GetObjectItem(item, "t");
             const cJSON *rh = cJSON_GetObjectItem(item, "rh");
+            const cJSON *ok = cJSON_GetObjectItem(item, "ok");
             if (id && id->valuestring) {
                 strncpy(out_msg->sht20[idx].id, id->valuestring, sizeof(out_msg->sht20[idx].id) - 1);
             }
             out_msg->sht20[idx].temperature_c = (float)cJSON_GetNumberValue(t);
             out_msg->sht20[idx].humidity_percent = (float)cJSON_GetNumberValue(rh);
+            out_msg->sht20[idx].valid = cJSON_IsTrue(ok);
             idx++;
         }
     }

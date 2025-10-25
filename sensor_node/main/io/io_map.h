@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #define IO_MAX_AMBIENT_SENSORS 2U
+#define IO_MUX_CHANNEL_NONE (-1)
 
 typedef enum {
     IO_AMBIENT_SENSOR_NONE = 0,
@@ -19,6 +20,8 @@ typedef enum {
 typedef struct {
     io_ambient_sensor_type_t type;
     uint8_t address;
+    uint8_t mux_address;
+    int8_t mux_channel;
 } io_ambient_sensor_t;
 
 typedef struct {

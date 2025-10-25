@@ -17,6 +17,7 @@ TEST_CASE("proto encode/decode sensor update json", "[proto]")
     strcpy(update.sht20[0].id, "SHT20_1");
     update.sht20[0].temperature_c = 25.5f;
     update.sht20[0].humidity_percent = 48.2f;
+    update.sht20[0].valid = true;
     memcpy(update.ds18b20[0].rom_code, "ABCDEFGH", 8);
     update.ds18b20[0].temperature_c = 22.75f;
     update.mcp[0].port_a = 0x0F;
@@ -33,6 +34,7 @@ TEST_CASE("proto encode/decode sensor update json", "[proto]")
     TEST_ASSERT_TRUE(proto_decode_sensor_update(buffer, len, false, &decoded, crc));
     TEST_ASSERT_EQUAL_UINT32(update.sequence_id, decoded.sequence_id);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, update.sht20[0].temperature_c, decoded.sht20[0].temperature_c);
+    TEST_ASSERT_EQUAL(update.sht20[0].valid, decoded.sht20[0].valid);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, update.ds18b20[0].temperature_c, decoded.ds18b20[0].temperature_c);
     TEST_ASSERT_EQUAL_UINT16(update.mcp[0].port_a, decoded.mcp[0].port_a);
 }
