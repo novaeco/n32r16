@@ -147,7 +147,25 @@ Les pages HTML sont produites dans `documentations/doxygen/output/html/index.htm
 - Documenter dans chaque release les paramètres `sdkconfig.defaults` divergents.
 - Tester un firmware sur un échantillon minimum de 3 cartes par variante matérielle.
 
-## 7. Rotation des certificats et gestion sécurisée des POP/jetons
+## 7. Politique OTA sécurisée
+
+- **Validation firmware** : toute configuration `ota_update_config_t` doit fournir un callback `validate` qui vérifie la
+  version minimale approuvée et compare le hash ELF (`app_elf_sha256`). Le callback reçoit la description de l'image en cours
+  d'exécution et l'empreinte précédemment appliquée (persistée dans NVS) pour permettre le blocage des builds obsolètes ou
+  inconnus.
+- **Persistance NVS** : le composant écrit la dernière version validée dans `NVS` (`namespace` `ota_state`, clé
+  `last_version`). Cette information est réutilisée côté callback pour refuser un downgrade et auditée lors des incidents.
+- **Gestion du rollback** : à chaque démarrage de la tâche OTA, `esp_ota_mark_app_valid_cancel_rollback()` est exécuté et le
+  statut est loggé. Les intégrateurs doivent surveiller ce log en recette afin de repérer un firmware encore marqué
+  "UNVERIFIED".
+- **Backoff et quotas** : les téléchargements sont tentés au maximum 5 fois par défaut, avec un backoff exponentiel
+  (5 s → 10 s → 20 s ... jusqu'à 60 s). Ces valeurs sont configurables via `initial_backoff_ms`, `max_backoff_ms` et
+  `max_retries` dans la structure de configuration.
+- **Tests obligatoires** : exécuter `idf.py -T` et vérifier le rapport `common/ota/tests/test_ota_update.c` qui mocke
+  `esp_https_ota` pour contrôler la validation, le stockage NVS et la stratégie de retry. Toute évolution du protocole OTA
+  doit ajouter de nouveaux cas Unity (par exemple signature ECDSA, nonce serveur, etc.).
+
+## 8. Rotation des certificats et gestion sécurisée des POP/jetons
 
 - **Rotation TLS** :
   - Générer un nouveau triplet `server_cert.pem` / `server_key.pem` signé par une autorité racine mise à jour (`ca_cert.pem`).
