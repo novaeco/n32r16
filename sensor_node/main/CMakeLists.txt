@@ -6,6 +6,7 @@ idf_component_register(SRCS
     "net/ws_server.c"
     "io/io_map.c"
     "drivers/sht20.c"
+    "drivers/bme280.c"
     "drivers/pca9685.c"
     "drivers/mcp23017.c"
     "drivers/ds18b20.c"

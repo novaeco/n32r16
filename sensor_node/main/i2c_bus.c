@@ -190,14 +190,20 @@ static void i2c_bus_scan(void)
     const io_map_t *map = io_map_get();
     bool expected[128] = {0};
     uint8_t logical_instances[128] = {0};
+    for (size_t i = 0; i < map->ambient_count && i < IO_MAX_AMBIENT_SENSORS; ++i) {
+        uint8_t saddr = map->ambient[i].address & 0x7F;
+        if (saddr) {
+            expected[saddr] = true;
+            logical_instances[saddr]++;
+        }
+    }
     for (size_t i = 0; i < 2; ++i) {
-        uint8_t saddr = map->sht20_addresses[i] & 0x7F;
-        expected[saddr] = true;
-        logical_instances[saddr]++;
         uint8_t mcp = map->mcp23017_addresses[i] & 0x7F;
         expected[mcp] = true;
     }
-    expected[map->pca9685_address & 0x7F] = true;
+    if (map->pwm_backend == IO_PWM_BACKEND_PCA9685 && map->pca9685_address) {
+        expected[map->pca9685_address & 0x7F] = true;
+    }
 
     uint8_t seen[128] = {0};
     for (uint8_t addr = I2C_SCAN_ADDR_MIN; addr <= I2C_SCAN_ADDR_MAX; ++addr) {

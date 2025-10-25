@@ -1,4 +1,54 @@
 menu "Sensor Node Options"
+    choice SENSOR_AMBIENT_SENSOR
+        prompt "Ambient sensor type"
+        default SENSOR_AMBIENT_SENSOR_SHT20
+        help
+            Select the ambient temperature and humidity sensing front-end attached to
+            the primary I\u00b2C bus. The firmware provides dedicated drivers and
+            filtering pipelines per sensor family and will synthesise demo data when
+            no physical devices are detected.
+
+    config SENSOR_AMBIENT_SENSOR_SHT20
+        bool "Sensirion SHT20"
+
+    config SENSOR_AMBIENT_SENSOR_BME280
+        bool "Bosch BME280"
+
+    endchoice
+
+    config SENSOR_ONEWIRE_GPIO
+        int "1-Wire bus GPIO"
+        range 0 48
+        default 8
+        help
+            GPIO used to interface the DS18B20 one-wire bus. Adjust when porting to
+            ESP32-S3 modules with different pinouts.
+
+    choice SENSOR_PWM_BACKEND_DRIVER
+        prompt "PWM backend"
+        default SENSOR_PWM_BACKEND_DRIVER_PCA9685
+        help
+            Select the PWM expansion peripheral used for actuator control.
+
+    config SENSOR_PWM_BACKEND_DRIVER_PCA9685
+        bool "NXP PCA9685 (I\u00b2C)"
+
+    config SENSOR_PWM_BACKEND_DRIVER_TLC5947
+        bool "TI TLC5947 (SPI)"
+
+    config SENSOR_PWM_BACKEND_DRIVER_NONE
+        bool "Disable external PWM backend"
+
+    endchoice
+
+    config SENSOR_PWM_BACKEND
+        string "PWM backend identifier"
+        default "pca9685" if SENSOR_PWM_BACKEND_DRIVER_PCA9685
+        default "tlc5947" if SENSOR_PWM_BACKEND_DRIVER_TLC5947
+        default "none" if SENSOR_PWM_BACKEND_DRIVER_NONE
+        help
+            String identifier for the selected PWM expansion backend. Exposed to the
+            application for conditional logic and telemetry labelling.
     config SENSOR_WS_PORT
         int "WebSocket server port"
         range 80 65535

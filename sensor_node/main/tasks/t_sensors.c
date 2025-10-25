@@ -1,7 +1,12 @@
 #include "tasks/t_sensors.h"
 
 #include "drivers/ds18b20.h"
+#if CONFIG_SENSOR_AMBIENT_SENSOR_SHT20
 #include "drivers/sht20.h"
+#endif
+#if CONFIG_SENSOR_AMBIENT_SENSOR_BME280
+#include "drivers/bme280.h"
+#endif
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -15,7 +20,7 @@
 #define SENSOR_TASK_PERIOD_MS 200
 #define DS18B20_RESOLUTION_BITS 12
 #define DS18B20_SCAN_INTERVAL_MS 60000
-#define SHT20_EMA_ALPHA 0.25f
+#define AMBIENT_EMA_ALPHA 0.25f
 
 typedef struct {
     sensor_data_model_t *model;
@@ -25,9 +30,10 @@ typedef struct {
     bool ds_conversion_pending;
     TickType_t ds_ready_tick;
     TickType_t next_ds_scan_tick;
-    float sht20_temp_ema[2];
-    float sht20_hum_ema[2];
-    bool sht20_initialized[2];
+    size_t ambient_count;
+    float ambient_temp_ema[IO_MAX_AMBIENT_SENSORS];
+    float ambient_hum_ema[IO_MAX_AMBIENT_SENSORS];
+    bool ambient_initialized[IO_MAX_AMBIENT_SENSORS];
 } sensors_task_ctx_t;
 
 static const char *TAG = "t_sensors";
@@ -50,23 +56,82 @@ static float ema_update(float prev, float sample, bool *initialized)
         *initialized = true;
         return sample;
     }
-    return prev + SHT20_EMA_ALPHA * (sample - prev);
+    return prev + AMBIENT_EMA_ALPHA * (sample - prev);
+}
+
+static const char *ambient_sensor_name(io_ambient_sensor_type_t type)
+{
+    switch (type) {
+    case IO_AMBIENT_SENSOR_SHT20:
+        return "SHT20";
+    case IO_AMBIENT_SENSOR_BME280:
+        return "BME280";
+    default:
+        return "AMBIENT";
+    }
+}
+
+static esp_err_t ambient_sensor_init(const io_ambient_sensor_t *sensor)
+{
+    if (!sensor) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    switch (sensor->type) {
+    case IO_AMBIENT_SENSOR_SHT20:
+#if CONFIG_SENSOR_AMBIENT_SENSOR_SHT20
+        return ESP_OK;
+#else
+        return ESP_ERR_NOT_SUPPORTED;
+#endif
+    case IO_AMBIENT_SENSOR_BME280:
+#if CONFIG_SENSOR_AMBIENT_SENSOR_BME280
+        return bme280_init(sensor->address);
+#else
+        return ESP_ERR_NOT_SUPPORTED;
+#endif
+    default:
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+}
+
+static esp_err_t ambient_sensor_read(const io_ambient_sensor_t *sensor, float *temp, float *humidity)
+{
+    if (!sensor || !temp || !humidity) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    switch (sensor->type) {
+    case IO_AMBIENT_SENSOR_SHT20:
+#if CONFIG_SENSOR_AMBIENT_SENSOR_SHT20
+        return sht20_read_temperature_humidity(sensor->address, temp, humidity);
+#else
+        return ESP_ERR_NOT_SUPPORTED;
+#endif
+    case IO_AMBIENT_SENSOR_BME280:
+#if CONFIG_SENSOR_AMBIENT_SENSOR_BME280
+        return bme280_read(sensor->address, temp, humidity, NULL);
+#else
+        return ESP_ERR_NOT_SUPPORTED;
+#endif
+    default:
+        return ESP_ERR_NOT_SUPPORTED;
+    }
 }
 
 /**
- * @brief Refresh cached SHT20 measurements and publish them to the data model.
+ * @brief Refresh cached ambient measurements and publish them to the data model.
  *
  * @return void
  */
-static void update_sht20_readings(void)
+static void update_ambient_readings(void)
 {
     const io_map_t *map = io_map_get();
-    for (size_t i = 0; i < 2; ++i) {
+    for (size_t i = 0; i < s_ctx.ambient_count && i < IO_MAX_AMBIENT_SENSORS; ++i) {
+        const io_ambient_sensor_t *sensor = &map->ambient[i];
         float temp = 0.0f;
         float hum = 0.0f;
-        esp_err_t err = sht20_read_temperature_humidity(map->sht20_addresses[i], &temp, &hum);
+        esp_err_t err = ambient_sensor_read(sensor, &temp, &hum);
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "SHT20 %zu read failed: %s, using synthetic telemetry", i,
+            ESP_LOGW(TAG, "%s %zu read failed: %s, using synthetic telemetry", ambient_sensor_name(sensor->type), i,
                      esp_err_to_name(err));
             TickType_t ticks = xTaskGetTickCount();
             float t_demo = 22.5f + 0.75f * sinf((float)ticks / 750.0f + (float)i);
@@ -74,13 +139,13 @@ static void update_sht20_readings(void)
             temp = t_demo;
             hum = h_demo;
         }
-        temp = ema_update(s_ctx.sht20_temp_ema[i], temp, &s_ctx.sht20_initialized[i]);
-        hum = ema_update(s_ctx.sht20_hum_ema[i], hum, &s_ctx.sht20_initialized[i]);
-        s_ctx.sht20_temp_ema[i] = temp;
-        s_ctx.sht20_hum_ema[i] = hum;
+        temp = ema_update(s_ctx.ambient_temp_ema[i], temp, &s_ctx.ambient_initialized[i]);
+        hum = ema_update(s_ctx.ambient_hum_ema[i], hum, &s_ctx.ambient_initialized[i]);
+        s_ctx.ambient_temp_ema[i] = temp;
+        s_ctx.ambient_hum_ema[i] = hum;
 
         char id[16];
-        snprintf(id, sizeof(id), "SHT20_%u", (unsigned)i + 1U);
+        snprintf(id, sizeof(id), "%s_%u", ambient_sensor_name(sensor->type), (unsigned)i + 1U);
         data_model_set_sht20(s_ctx.model, i, id, temp, hum);
     }
 }
@@ -186,9 +251,18 @@ static void read_ds18b20_temperatures(void)
 static void sensors_task(void *arg)
 {
     (void)arg;
-    memset(&s_ctx.sht20_temp_ema, 0, sizeof(s_ctx.sht20_temp_ema));
-    memset(&s_ctx.sht20_hum_ema, 0, sizeof(s_ctx.sht20_hum_ema));
-    memset(&s_ctx.sht20_initialized, 0, sizeof(s_ctx.sht20_initialized));
+    memset(&s_ctx.ambient_temp_ema, 0, sizeof(s_ctx.ambient_temp_ema));
+    memset(&s_ctx.ambient_hum_ema, 0, sizeof(s_ctx.ambient_hum_ema));
+    memset(&s_ctx.ambient_initialized, 0, sizeof(s_ctx.ambient_initialized));
+    const io_map_t *map = io_map_get();
+    s_ctx.ambient_count = map->ambient_count < IO_MAX_AMBIENT_SENSORS ? map->ambient_count : IO_MAX_AMBIENT_SENSORS;
+    for (size_t i = 0; i < s_ctx.ambient_count; ++i) {
+        esp_err_t err = ambient_sensor_init(&map->ambient[i]);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "%s %zu init failed: %s", ambient_sensor_name(map->ambient[i].type), i,
+                     esp_err_to_name(err));
+        }
+    }
     s_ctx.ds_count = 0;
     s_ctx.ds_conversion_pending = false;
     s_ctx.next_ds_scan_tick = xTaskGetTickCount();
@@ -197,7 +271,7 @@ static void sensors_task(void *arg)
     kick_ds18b20_conversion();
 
     while (true) {
-        update_sht20_readings();
+        update_ambient_readings();
         ensure_ds18b20_devices();
         read_ds18b20_temperatures();
         kick_ds18b20_conversion();
