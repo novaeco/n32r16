@@ -5,6 +5,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/timers.h"
+#include "ws_security.h"
+#include "base64_utils.h"
+#include <ctype.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +17,8 @@ typedef struct {
     int fd;
     TickType_t last_seen;
     bool awaiting_pong;
+    bool handshake_verified;
+    uint64_t last_counter;
 } ws_client_t;
 
 static const char *TAG = "ws_server";
@@ -27,6 +33,17 @@ static SemaphoreHandle_t s_client_lock;
 static StaticSemaphore_t s_client_lock_storage;
 static TimerHandle_t s_ping_timer;
 static uint8_t *s_rx_buffer;
+static ws_security_context_t s_security_ctx;
+
+typedef struct {
+    bool valid;
+    TickType_t timestamp;
+    uint8_t nonce[WS_SECURITY_NONCE_LEN];
+} ws_nonce_entry_t;
+
+static ws_nonce_entry_t *s_nonce_cache;
+static size_t s_nonce_capacity;
+static TickType_t s_nonce_ttl_ticks;
 
 /**
  * @brief Default hook to start the HTTPS server.
@@ -332,6 +349,83 @@ static void clients_unlock(void)
     }
 }
 
+static uint8_t hex_value(char c)
+{
+    if (c >= '0' && c <= '9') {
+        return (uint8_t)(c - '0');
+    }
+    c = (char)tolower((unsigned char)c);
+    if (c >= 'a' && c <= 'f') {
+        return (uint8_t)(c - 'a' + 10);
+    }
+    return 0xFFU;
+}
+
+static bool parse_nonce_hex(const char *hex, uint8_t *out)
+{
+    if (!hex || !out) {
+        return false;
+    }
+    for (size_t i = 0; i < WS_SECURITY_NONCE_LEN; ++i) {
+        uint8_t hi = hex_value(hex[2U * i]);
+        uint8_t lo = hex_value(hex[2U * i + 1U]);
+        if (hi > 0x0FU || lo > 0x0FU) {
+            return false;
+        }
+        out[i] = (uint8_t)((hi << 4U) | lo);
+    }
+    return true;
+}
+
+static bool nonce_is_duplicate(const uint8_t *nonce, TickType_t now)
+{
+    if (!s_nonce_cache || s_nonce_capacity == 0) {
+        return false;
+    }
+    for (size_t i = 0; i < s_nonce_capacity; ++i) {
+        ws_nonce_entry_t *entry = &s_nonce_cache[i];
+        if (!entry->valid) {
+            continue;
+        }
+        if (s_nonce_ttl_ticks > 0 && (now - entry->timestamp) > s_nonce_ttl_ticks) {
+            entry->valid = false;
+            continue;
+        }
+        if (memcmp(entry->nonce, nonce, WS_SECURITY_NONCE_LEN) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void nonce_store(const uint8_t *nonce, TickType_t now)
+{
+    if (!s_nonce_cache || s_nonce_capacity == 0 || !nonce) {
+        return;
+    }
+    size_t slot = SIZE_MAX;
+    TickType_t oldest_age = 0;
+    for (size_t i = 0; i < s_nonce_capacity; ++i) {
+        ws_nonce_entry_t *entry = &s_nonce_cache[i];
+        if (!entry->valid) {
+            slot = i;
+            break;
+        }
+        TickType_t age = now - entry->timestamp;
+        if (slot == SIZE_MAX || age > oldest_age) {
+            slot = i;
+            oldest_age = age;
+        }
+    }
+    if (slot == SIZE_MAX) {
+        slot = 0;
+    }
+    ws_nonce_entry_t *entry = &s_nonce_cache[slot];
+    entry->valid = true;
+    entry->timestamp = now;
+    memcpy(entry->nonce, nonce, WS_SECURITY_NONCE_LEN);
+}
+
 /**
  * @brief Find a client entry by socket descriptor.
  *
@@ -368,6 +462,8 @@ static void drop_client_locked(int fd)
             s_clients[i].fd = -1;
             s_clients[i].last_seen = 0;
             s_clients[i].awaiting_pong = false;
+            s_clients[i].handshake_verified = !ws_security_is_handshake_enabled(&s_security_ctx);
+            s_clients[i].last_counter = 0;
             break;
         }
     }
@@ -404,6 +500,8 @@ static esp_err_t add_client(int fd)
                 s_clients[i].fd = fd;
                 s_clients[i].last_seen = xTaskGetTickCount();
                 s_clients[i].awaiting_pong = false;
+                s_clients[i].handshake_verified = !ws_security_is_handshake_enabled(&s_security_ctx);
+                s_clients[i].last_counter = 0;
                 ESP_LOGI(TAG, "Client registered: %d", fd);
                 err = ESP_OK;
                 break;
@@ -414,6 +512,17 @@ static esp_err_t add_client(int fd)
     return err;
 }
 
+static void mark_client_verified(int fd)
+{
+    clients_lock();
+    ws_client_t *client = find_client(fd);
+    if (client) {
+        client->handshake_verified = true;
+        client->last_counter = 0;
+    }
+    clients_unlock();
+}
+
 /**
  * @brief Validate the Authorization header against the configured token.
  *
@@ -422,20 +531,72 @@ static esp_err_t add_client(int fd)
  */
 static bool authorize_request(httpd_req_t *req)
 {
-    if (!s_cfg.auth_token || strlen(s_cfg.auth_token) == 0) {
+    const char *token = s_cfg.auth_token ? s_cfg.auth_token : "";
+    if (token[0] != '\0') {
+        char header[192] = {0};
+        esp_err_t err = httpd_req_get_hdr_value_str(req, "Authorization", header, sizeof(header));
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Missing Authorization header");
+            return false;
+        }
+        static const char prefix[] = "Bearer ";
+        size_t prefix_len = sizeof(prefix) - 1U;
+        if (strncmp(header, prefix, prefix_len) != 0) {
+            ESP_LOGW(TAG, "Unexpected Authorization scheme");
+            return false;
+        }
+        if (strcmp(header + prefix_len, token) != 0) {
+            ESP_LOGW(TAG, "Bearer token mismatch");
+            return false;
+        }
+    }
+
+    if (!ws_security_is_handshake_enabled(&s_security_ctx)) {
         return true;
     }
-    char header[128] = {0};
-    esp_err_t err = httpd_req_get_hdr_value_str(req, "Authorization", header, sizeof(header));
+
+    char nonce_hex[WS_SECURITY_NONCE_LEN * 2U + 1U];
+    memset(nonce_hex, 0, sizeof(nonce_hex));
+    if (httpd_req_get_hdr_value_str(req, "X-WS-Nonce", nonce_hex, sizeof(nonce_hex)) != ESP_OK) {
+        ESP_LOGW(TAG, "Missing X-WS-Nonce header");
+        return false;
+    }
+    if (strlen(nonce_hex) != WS_SECURITY_NONCE_LEN * 2U) {
+        ESP_LOGW(TAG, "Invalid nonce length");
+        return false;
+    }
+    uint8_t nonce[WS_SECURITY_NONCE_LEN] = {0};
+    if (!parse_nonce_hex(nonce_hex, nonce)) {
+        ESP_LOGW(TAG, "Nonce hex decoding failed");
+        return false;
+    }
+
+    char signature_b64[160] = {0};
+    if (httpd_req_get_hdr_value_str(req, "X-WS-Signature", signature_b64, sizeof(signature_b64)) != ESP_OK) {
+        ESP_LOGW(TAG, "Missing X-WS-Signature header");
+        return false;
+    }
+    uint8_t signature[64] = {0};
+    size_t signature_len = 0;
+    if (base64_utils_decode(signature_b64, signature, sizeof(signature), &signature_len) != ESP_OK) {
+        ESP_LOGW(TAG, "Signature base64 decode failed");
+        return false;
+    }
+
+    TickType_t now = s_platform->task_get_tick_count();
+    if (nonce_is_duplicate(nonce, now)) {
+        ESP_LOGW(TAG, "Nonce replay detected");
+        return false;
+    }
+
+    esp_err_t err = ws_security_verify_handshake(&s_security_ctx, nonce, sizeof(nonce), token, signature,
+                                                 signature_len);
     if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Handshake verification failed: %s", esp_err_to_name(err));
         return false;
     }
-    const char *prefix = "Bearer ";
-    size_t prefix_len = strlen(prefix);
-    if (strncmp(header, prefix, prefix_len) != 0) {
-        return false;
-    }
-    return strcmp(header + prefix_len, s_cfg.auth_token) == 0;
+    nonce_store(nonce, now);
+    return true;
 }
 
 /**
@@ -519,6 +680,9 @@ static esp_err_t ws_handler(httpd_req_t *req)
             s_platform->httpd_resp_send(req, "Too many clients", HTTPD_RESP_USE_STRLEN);
             return ESP_FAIL;
         }
+        if (ws_security_is_handshake_enabled(&s_security_ctx)) {
+            mark_client_verified(fd);
+        }
         return ESP_OK;
     }
 
@@ -563,7 +727,24 @@ static esp_err_t ws_handler(httpd_req_t *req)
         uint32_t crc32 = 0;
         const uint8_t *payload = frame.payload;
         size_t len = frame.len;
-        if (frame.type == HTTPD_WS_TYPE_BINARY && frame.len >= sizeof(uint32_t)) {
+        if (ws_security_is_encryption_enabled(&s_security_ctx) && frame.type == HTTPD_WS_TYPE_BINARY) {
+            if (!client->handshake_verified) {
+                ESP_LOGW(TAG, "Encrypted frame from unverified client %d", fd);
+                return ESP_ERR_INVALID_STATE;
+            }
+            size_t plaintext_len = 0;
+            esp_err_t dec_err = ws_security_decrypt(&s_security_ctx, frame.payload, frame.len, &plaintext_len,
+                                                    &client->last_counter);
+            if (dec_err != ESP_OK) {
+                ESP_LOGW(TAG, "Decrypt failed for client %d: %s", fd, esp_err_to_name(dec_err));
+                s_platform->httpd_sess_trigger_close(s_server, fd);
+                drop_client(fd);
+                return dec_err;
+            }
+            payload = frame.payload;
+            len = plaintext_len;
+        }
+        if (frame.type == HTTPD_WS_TYPE_BINARY && len >= sizeof(uint32_t)) {
             crc32 = ((const uint32_t *)payload)[0];
             payload += sizeof(uint32_t);
             len -= sizeof(uint32_t);
@@ -647,18 +828,62 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
     if (s_cfg.pong_timeout_ms == 0) {
         s_cfg.pong_timeout_ms = 5000;
     }
+    if (s_cfg.handshake_replay_window_ms == 0) {
+        s_cfg.handshake_replay_window_ms = 300000;
+    }
+    if (s_cfg.enable_frame_encryption || s_cfg.enable_handshake_token) {
+        if (!s_cfg.crypto_secret || s_cfg.crypto_secret_len == 0) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    if (s_cfg.handshake_cache_size == 0) {
+        s_cfg.handshake_cache_size = s_cfg.max_clients ? s_cfg.max_clients * 4U : 16U;
+    }
+
+    ws_security_config_t sec_cfg = {
+        .secret = s_cfg.crypto_secret,
+        .secret_len = s_cfg.crypto_secret_len,
+        .enable_encryption = s_cfg.enable_frame_encryption,
+        .enable_handshake = s_cfg.enable_handshake_token,
+    };
+    esp_err_t sec_err = ws_security_context_init(&s_security_ctx, &sec_cfg);
+    if (sec_err != ESP_OK) {
+        return sec_err;
+    }
+    ws_security_reset_counters(&s_security_ctx);
+
+    s_nonce_cache = NULL;
+    s_nonce_capacity = 0;
+    s_nonce_ttl_ticks = pdMS_TO_TICKS(s_cfg.handshake_replay_window_ms);
+    if (ws_security_is_handshake_enabled(&s_security_ctx)) {
+        s_nonce_capacity = s_cfg.handshake_cache_size;
+        if (s_nonce_capacity == 0) {
+            s_nonce_capacity = 16;
+        }
+        s_nonce_cache = calloc(s_nonce_capacity, sizeof(ws_nonce_entry_t));
+        if (!s_nonce_cache) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
 
     s_client_capacity = s_cfg.max_clients;
     s_clients = calloc(s_client_capacity, sizeof(ws_client_t));
     if (!s_clients) {
+        free(s_nonce_cache);
+        s_nonce_cache = NULL;
+        s_nonce_capacity = 0;
         return ESP_ERR_NO_MEM;
     }
     for (size_t i = 0; i < s_client_capacity; ++i) {
         s_clients[i].fd = -1;
+        s_clients[i].handshake_verified = !ws_security_is_handshake_enabled(&s_security_ctx);
     }
 
     s_rx_buffer = malloc(s_cfg.rx_buffer_size + 1);
     if (!s_rx_buffer) {
+        free(s_nonce_cache);
+        s_nonce_cache = NULL;
+        s_nonce_capacity = 0;
         free(s_clients);
         s_clients = NULL;
         return ESP_ERR_NO_MEM;
@@ -668,6 +893,9 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
     if (!s_client_lock) {
         free(s_rx_buffer);
         s_rx_buffer = NULL;
+        free(s_nonce_cache);
+        s_nonce_cache = NULL;
+        s_nonce_capacity = 0;
         free(s_clients);
         s_clients = NULL;
         return ESP_ERR_NO_MEM;
@@ -680,6 +908,9 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
         s_client_lock = NULL;
         free(s_rx_buffer);
         s_rx_buffer = NULL;
+        free(s_nonce_cache);
+        s_nonce_cache = NULL;
+        s_nonce_capacity = 0;
         free(s_clients);
         s_clients = NULL;
         return ESP_ERR_NO_MEM;
@@ -709,6 +940,9 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
         s_client_lock = NULL;
         free(s_rx_buffer);
         s_rx_buffer = NULL;
+        free(s_nonce_cache);
+        s_nonce_cache = NULL;
+        s_nonce_capacity = 0;
         free(s_clients);
         s_clients = NULL;
         return ret;
@@ -764,6 +998,11 @@ void ws_server_stop(void)
     s_client_capacity = 0;
     s_rx_cb = NULL;
     s_rx_ctx = NULL;
+    free(s_nonce_cache);
+    s_nonce_cache = NULL;
+    s_nonce_capacity = 0;
+    s_nonce_ttl_ticks = 0;
+    memset(&s_security_ctx, 0, sizeof(s_security_ctx));
 }
 
 /**
@@ -780,12 +1019,30 @@ esp_err_t ws_server_send(const uint8_t *data, size_t len)
     }
     esp_err_t result = ESP_OK;
     clients_lock();
+    const uint8_t *frame_data = data;
+    size_t frame_len = len;
+    uint8_t *encrypted = NULL;
+    if (ws_security_is_encryption_enabled(&s_security_ctx)) {
+        size_t required = ws_security_encrypted_size(&s_security_ctx, len);
+        encrypted = (uint8_t *)malloc(required);
+        if (!encrypted) {
+            clients_unlock();
+            return ESP_ERR_NO_MEM;
+        }
+        esp_err_t enc_err = ws_security_encrypt(&s_security_ctx, data, len, encrypted, required, &frame_len);
+        if (enc_err != ESP_OK) {
+            free(encrypted);
+            clients_unlock();
+            return enc_err;
+        }
+        frame_data = encrypted;
+    }
     for (size_t i = 0; i < s_client_capacity; ++i) {
         ws_client_t *client = &s_clients[i];
         if (client->fd < 0) {
             continue;
         }
-        esp_err_t err = send_ws_frame(client->fd, HTTPD_WS_TYPE_BINARY, data, len);
+        esp_err_t err = send_ws_frame(client->fd, HTTPD_WS_TYPE_BINARY, frame_data, frame_len);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Send failed to %d: %s", client->fd, esp_err_to_name(err));
             s_platform->httpd_sess_trigger_close(s_server, client->fd);
@@ -793,6 +1050,7 @@ esp_err_t ws_server_send(const uint8_t *data, size_t len)
             result = err;
         }
     }
+    free(encrypted);
     clients_unlock();
     return result;
 }
@@ -841,6 +1099,8 @@ void ws_server_clear_clients_for_test(void)
             s_clients[i].fd = -1;
             s_clients[i].last_seen = 0;
             s_clients[i].awaiting_pong = false;
+            s_clients[i].handshake_verified = !ws_security_is_handshake_enabled(&s_security_ctx);
+            s_clients[i].last_counter = 0;
         }
     }
     clients_unlock();

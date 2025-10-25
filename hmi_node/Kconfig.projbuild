@@ -35,6 +35,15 @@ menu "HMI Node Options"
     config HMI_WS_AUTH_TOKEN
         string "WebSocket bearer token"
         default "replace-me"
+    config HMI_WS_ENABLE_ENCRYPTION
+        bool "Encrypt WebSocket frames with AES-GCM"
+        default n
+    config HMI_WS_ENABLE_HANDSHAKE
+        bool "Include HMAC handshake headers"
+        default n
+    config HMI_WS_CRYPTO_SECRET_BASE64
+        string "WebSocket shared secret (Base64)"
+        default ""
     config HMI_WS_TLS_SNI_OVERRIDE
         string "TLS server name override"
         default ""

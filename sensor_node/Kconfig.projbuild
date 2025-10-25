@@ -92,6 +92,23 @@ menu "Sensor Node Options"
     config SENSOR_WS_AUTH_TOKEN
         string "WebSocket bearer token"
         default "replace-me"
+    config SENSOR_WS_ENABLE_ENCRYPTION
+        bool "Encrypt WebSocket frames with AES-GCM"
+        default n
+    config SENSOR_WS_ENABLE_HANDSHAKE
+        bool "Require HMAC handshake headers"
+        default n
+    config SENSOR_WS_CRYPTO_SECRET_BASE64
+        string "WebSocket shared secret (Base64)"
+        default ""
+    config SENSOR_WS_HANDSHAKE_TTL_MS
+        int "Handshake nonce retention window (ms)"
+        range 1000 3600000
+        default 300000
+    config SENSOR_WS_HANDSHAKE_CACHE_SIZE
+        int "Handshake nonce cache size"
+        range 8 128
+        default 32
     config SENSOR_PROV_SERVICE_NAME
         string "Provisioning service name suffix"
         default "SENSOR"

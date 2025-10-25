@@ -122,6 +122,55 @@ idf.py doctor                    # vérifie la toolchain et les dépendances
 idf_tools.py list --overview     # confirme les versions exactes installées
 ```
 
+### Dépannage des téléchargements ESP-IDF (erreurs TLS/CA)
+
+Un blocage fréquent lors de `./install.sh` provient d'une chaîne de certificats TLS incomplète côté hôte. Les symptômes
+observés incluent `Missing Authority Key Identifier` ou des erreurs `CERTIFICATE_VERIFY_FAILED` lorsqu'`install.sh`
+télécharge `tools.json` ou les archives `espressif/toolchain-*.tar.gz`. Procédez ainsi selon votre environnement :
+
+- **Linux/WSL2**
+  1. Mettre à jour le magasin CA du système :
+     ```bash
+     sudo apt update
+     sudo apt install --reinstall ca-certificates
+     sudo update-ca-certificates
+     ```
+  2. Vérifier que l'heure système est correcte (`timedatectl status`).
+  3. Relancer l'installation en forçant l'utilisation du magasin système :
+     ```bash
+     IDF_MIRROR_SYSTEM_CERTS=1 ./install.sh esp32s3 esp32s2 esp32c3
+     ```
+  4. Si le proxy d'entreprise intercepte TLS, exporter le certificat racine dans `/usr/local/share/ca-certificates/` puis
+     relancer `sudo update-ca-certificates`.
+
+- **macOS**
+  1. Ajouter le certificat racine manquant dans le trousseau système (`Trousseaux d'accès` → `Système` → `Certificats`).
+  2. S'assurer que le certificat est marqué « Toujours approuver » pour l'usage SSL.
+  3. Rejouer l'installation en utilisant Python 3.11 livré par Homebrew (les versions système 3.9 ne connaissent pas
+     toujours les autorités récentes) :
+     ```bash
+     /opt/homebrew/bin/python3 -m pip install --upgrade certifi
+     IDF_PYTHON_ENV_PATH=$HOME/esp/idf_py_env ./install.sh esp32s3 esp32s2 esp32c3
+     ```
+
+- **Windows (PowerShell / ESP-IDF Tools Installer)**
+  1. Lancer `certmgr.msc` → `Trusted Root Certification Authorities` et importer la racine fournie par votre DSI si vous
+     êtes derrière un proxy SSL.
+  2. Mettre à jour le magasin CA système :
+     ```powershell
+     certutil -generateSSTFromWU roots.sst
+     certutil -addstore -f root roots.sst
+     ```
+  3. Relancer l'ESP-IDF PowerShell prompt puis exécuter :
+     ```powershell
+     $env:IDF_MIRROR_SYSTEM_CERTS = "1"
+     ./install.bat esp32s3 esp32s2 esp32c3
+     ```
+
+Si le téléchargement reste impossible, utilisez le miroir GitHub `https://dl.espressif.com/github_assets/` en exportant
+`IDF_MIRROR_OVERRIDE` avant l'exécution d'`install.sh`. Archivez les logs dans `tools/logs/install_failure.log` pour
+fournir à l'équipe QA une trace exploitable lors de l'ouverture d'une issue.
+
 ## Étape 2 – Cloner le projet
 1. Choisir un dossier de travail :
    ```bash

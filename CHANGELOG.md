@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.0.0 - 2024-05-13
+
+- feat(security): add AES-GCM frame encryption and HMAC handshake for WebSocket links
+- feat(platform): ship ESP32-S2/C3 configuration overlays and partition tables
+- docs: expand README with target profile guidance and demo capture workflow
+- chore: add contributor guidelines and WebSocket security unit tests
+
 - Merge pull request #14 from novaeco/codex/improve-environmental-monitoring-project (5d02eff)
 - feat(sensor): add coverage tooling and QA documentation (545d437)
 - Merge pull request #13 from novaeco/codex/create-documentation-folder-with-installation-guide (b2f4127)
