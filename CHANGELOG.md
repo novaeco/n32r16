@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.0 - 2024-06-05
+
+- feat(security): add WebSocket TOTP two-factor verification and Base32 secret support
+- feat(ui): size LVGL draw buffers dynamically from runtime memory profiles
+- docs: describe TOTP provisioning and adaptive memory management in README/documentation
+- chore: add GitHub issue templates for bugs and feature requests
+- test: extend ws_client/ws_server/ws_security suites for TOTP and header regeneration
+
 ## v1.0.0 - 2024-05-13
 
 - feat(security): add AES-GCM frame encryption and HMAC handshake for WebSocket links

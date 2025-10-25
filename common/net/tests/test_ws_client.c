@@ -34,6 +34,12 @@ static const uint8_t *s_last_rx_payload;
 static size_t s_last_rx_len;
 static uint32_t s_last_rx_crc;
 static int s_rx_calls;
+static uint64_t s_fake_unix_time;
+
+static uint64_t fake_time_provider(void)
+{
+    return s_fake_unix_time;
+}
 
 static esp_websocket_client_handle_t fake_client_init(const esp_websocket_client_config_t *config)
 {
@@ -183,6 +189,7 @@ static void reset_state(void)
     s_last_rx_crc = 0;
     s_rx_calls = 0;
     s_last_send_len = 0;
+    s_fake_unix_time = 0;
 }
 
 void setUp(void)
@@ -342,6 +349,45 @@ TEST_CASE("ws client regenerates handshake headers on reconnect", "[net][ws]")
     TEST_ASSERT_EQUAL(2, s_client_start_calls);
     TEST_ASSERT_NOT_NULL(s_last_config.headers);
     TEST_ASSERT_NOT_EQUAL(0, strcmp(header_snapshot, s_last_config.headers));
+}
+
+TEST_CASE("ws client emits totp header when enabled", "[net][ws]")
+{
+    static const uint8_t secret[] = "12345678901234567890";
+    s_fake_unix_time = 59;
+    ws_client_config_t cfg = {
+        .uri = "wss://secure", 
+        .auth_token = "totp-token",
+        .crypto_secret = NULL,
+        .crypto_secret_len = 0,
+        .enable_handshake_token = false,
+        .enable_totp = true,
+        .totp_secret = secret,
+        .totp_secret_len = sizeof(secret) - 1U,
+        .totp_period_s = 30,
+        .totp_digits = 8,
+        .totp_window = 1,
+        .reconnect_min_delay_ms = 100,
+        .reconnect_max_delay_ms = 100,
+        .get_time_unix = fake_time_provider,
+    };
+
+    TEST_ASSERT_EQUAL(ESP_OK, ws_client_start(&cfg, NULL, NULL));
+    TEST_ASSERT_NOT_NULL(s_last_config.headers);
+    TEST_ASSERT_NOT_NULL(strstr(s_last_config.headers, "Authorization: Bearer totp-token"));
+    TEST_ASSERT_NOT_NULL(strstr(s_last_config.headers, "X-WS-TOTP: 94287082"));
+
+    esp_websocket_event_data_t evt = {
+        .data_ptr = NULL,
+        .payload_len = 0,
+        .op_code = WS_TRANSPORT_OPCODES_TEXT,
+    };
+    s_event_handler(s_event_ctx, WEBSOCKET_EVENT_DISCONNECTED, &evt);
+    TEST_ASSERT_NOT_NULL(s_timer.cb);
+    s_fake_unix_time = 1111111109;
+    s_timer.cb(&s_timer);
+    TEST_ASSERT_NOT_NULL(s_last_config.headers);
+    TEST_ASSERT_NOT_NULL(strstr(s_last_config.headers, "X-WS-TOTP: 07081804"));
 }
 
 TEST_CASE("ws client encrypts outbound payloads when enabled", "[net][ws]")

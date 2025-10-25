@@ -101,6 +101,24 @@ menu "Sensor Node Options"
     config SENSOR_WS_CRYPTO_SECRET_BASE64
         string "WebSocket shared secret (Base64)"
         default ""
+    config SENSOR_WS_ENABLE_TOTP
+        bool "Require TOTP header for WebSocket clients"
+        default n
+    config SENSOR_WS_TOTP_SECRET_BASE32
+        string "TOTP shared secret (Base32)"
+        default ""
+    config SENSOR_WS_TOTP_PERIOD_S
+        int "TOTP time-step (seconds)"
+        range 15 120
+        default 30
+    config SENSOR_WS_TOTP_DIGITS
+        int "TOTP code digits"
+        range 6 8
+        default 8
+    config SENSOR_WS_TOTP_WINDOW
+        int "Accepted TOTP step drift"
+        range 0 4
+        default 1
     config SENSOR_WS_HANDSHAKE_TTL_MS
         int "Handshake nonce retention window (ms)"
         range 1000 3600000

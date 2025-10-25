@@ -2,6 +2,7 @@
 
 #include "esp_log.h"
 #include "esp_system.h"
+#include "totp.h"
 #include "mbedtls/gcm.h"
 #include "mbedtls/md.h"
 #include "mbedtls/platform_util.h"
@@ -74,6 +75,20 @@ esp_err_t ws_security_context_init(ws_security_context_t *ctx, const ws_security
         }
         ctx->encryption_enabled = true;
         ctx->tx_counter = 0;
+    }
+    if (config->enable_totp) {
+        if (!config->totp_secret || config->totp_secret_len == 0 || config->totp_secret_len > sizeof(ctx->totp_secret)) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (config->totp_digits < 6 || config->totp_digits > 8 || config->totp_period_s == 0) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        memcpy(ctx->totp_secret, config->totp_secret, config->totp_secret_len);
+        ctx->totp_secret_len = config->totp_secret_len;
+        ctx->totp_digits = config->totp_digits;
+        ctx->totp_period_s = config->totp_period_s;
+        ctx->totp_window = config->totp_window;
+        ctx->totp_enabled = true;
     }
     return ESP_OK;
 }
@@ -271,4 +286,42 @@ void ws_security_reset_counters(ws_security_context_t *ctx)
         return;
     }
     ctx->tx_counter = 0;
+}
+
+bool ws_security_is_totp_enabled(const ws_security_context_t *ctx)
+{
+    return ctx && ctx->totp_enabled;
+}
+
+uint8_t ws_security_totp_digits(const ws_security_context_t *ctx)
+{
+    return ctx && ctx->totp_enabled ? ctx->totp_digits : 0;
+}
+
+esp_err_t ws_security_compute_totp(const ws_security_context_t *ctx, uint64_t unix_time, uint32_t *code)
+{
+    if (!ctx || !ctx->totp_enabled) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    totp_config_t cfg = {
+        .secret = ctx->totp_secret,
+        .secret_len = ctx->totp_secret_len,
+        .period_s = ctx->totp_period_s,
+        .digits = ctx->totp_digits,
+    };
+    return totp_compute(&cfg, unix_time, code);
+}
+
+esp_err_t ws_security_verify_totp(const ws_security_context_t *ctx, uint64_t unix_time, uint32_t code, bool *match)
+{
+    if (!ctx || !ctx->totp_enabled) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    totp_config_t cfg = {
+        .secret = ctx->totp_secret,
+        .secret_len = ctx->totp_secret_len,
+        .period_s = ctx->totp_period_s,
+        .digits = ctx->totp_digits,
+    };
+    return totp_verify(&cfg, unix_time, ctx->totp_window, code, match);
 }

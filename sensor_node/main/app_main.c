@@ -8,6 +8,7 @@
 #include "common/net/wifi_manager.h"
 #include "common/ota/ota_update.h"
 #include "common/util/monotonic.h"
+#include "common/util/memory_profile.h"
 #include "data_model.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -63,6 +64,8 @@ void app_main(void)
     sensor_validate_runtime_secrets();
 
     ESP_LOGI(TAG, "Booting sensor node firmware");
+    ESP_ERROR_CHECK(memory_profile_init());
+    memory_profile_log();
     ESP_ERROR_CHECK(i2c_bus_init());
 
     onewire_bus_handle_t ow_bus;
