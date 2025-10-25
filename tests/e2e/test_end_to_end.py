@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import copy
 from typing import Dict
 
 import pytest
@@ -111,3 +113,42 @@ async def test_command_round_trip(sample_command: Dict[str, object]) -> None:
     command, ok = await sensor.receive_command()
     assert ok is False
     assert command is None
+
+
+@pytest.mark.asyncio
+async def test_multi_client_broadcast_and_commands(
+    sample_update: Dict[str, object], sample_command: Dict[str, object]
+) -> None:
+    server = MockSensorServer(auth_token="multi-token")
+    clients = [MockHMIClient(token="multi-token") for _ in range(3)]
+    connections = [await client.connect(server) for client in clients]
+
+    assert server.connection_count == 3
+
+    hmis = [HMINodeHarness(conn) for conn in connections]
+    sensors = [SensorNodeHarness(conn) for conn in connections]
+
+    await server.broadcast_update(sample_update)
+    updates = await asyncio.gather(*(hmi.receive_update() for hmi in hmis))
+    for update in updates:
+        assert update is not None
+        assert update["seq"] == sample_update["sequence_id"]
+
+    for index, hmi in enumerate(hmis):
+        command = copy.deepcopy(sample_command)
+        command["sequence_id"] = index + 100
+        command["set_pwm"]["ch"] = index
+        command["set_pwm"]["duty"] = 1024 * (index + 1)
+        await hmi.send_command(command)
+
+    results = await asyncio.gather(*(sensor.receive_command() for sensor in sensors))
+    for index, (command, ok) in enumerate(results):
+        assert ok is True
+        assert command is not None
+        assert command["seq"] == index + 100
+        assert sensors[index].commands.pwm_channels[index] == 1024 * (index + 1)
+
+
+def test_split_frame_rejects_short_frame() -> None:
+    with pytest.raises(ValueError):
+        proto.split_frame(b"\x01\x02")
