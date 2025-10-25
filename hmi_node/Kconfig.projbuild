@@ -24,6 +24,13 @@ menu "HMI Node Options"
     config HMI_PROV_POP
         string "Provisioning proof-of-possession"
         default "hmi-pop"
+    config HMI_PROV_PREFER_BLE
+        bool "Préférer le schéma de provisioning BLE"
+        default n
+        help
+            Active la tentative de provisioning via BLE (ESP BLE Provisioning).
+            Si le contrôleur BLE n'est pas disponible ou échoue à
+            s'initialiser, le provisioning SoftAP est utilisé en repli.
     config HMI_OTA_URL
         string "HTTPS OTA manifest URL"
         default "https://example.com/hmi/ota.json"

@@ -82,6 +82,11 @@ void hmi_ws_client_start(hmi_data_model_t *model)
         .power_save = false,
         .service_name_suffix = CONFIG_HMI_PROV_SERVICE_NAME,
         .pop = CONFIG_HMI_PROV_POP,
+#ifdef CONFIG_HMI_PROV_PREFER_BLE
+        .prefer_ble = true,
+#else
+        .prefer_ble = false,
+#endif
     };
     ESP_ERROR_CHECK(wifi_manager_start(&wifi_cfg));
 
