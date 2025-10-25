@@ -32,6 +32,12 @@ static void sanitize_preferences(hmi_user_preferences_t *prefs)
     prefs->ssid[sizeof(prefs->ssid) - 1] = '\0';
     prefs->password[sizeof(prefs->password) - 1] = '\0';
     prefs->mdns_target[sizeof(prefs->mdns_target) - 1] = '\0';
+    if (prefs->text_scale_percent < 80 || prefs->text_scale_percent > 140) {
+        prefs->text_scale_percent = 100;
+    }
+    if (prefs->language >= HMI_LANGUAGE_MAX) {
+        prefs->language = HMI_LANGUAGE_EN;
+    }
 }
 
 static void hmi_data_model_set_default_preferences(hmi_user_preferences_t *prefs)
@@ -41,6 +47,10 @@ static void hmi_data_model_set_default_preferences(hmi_user_preferences_t *prefs
     }
     prefs->dark_theme = true;
     prefs->use_fahrenheit = false;
+    prefs->high_contrast = false;
+    prefs->large_touch_targets = false;
+    prefs->text_scale_percent = 100;
+    prefs->language = HMI_LANGUAGE_EN;
     prefs->ssid[0] = '\0';
     prefs->password[0] = '\0';
     strncpy(prefs->mdns_target, "sensor-node.local", sizeof(prefs->mdns_target) - 1);
@@ -200,6 +210,10 @@ void hmi_data_model_set_preferences(hmi_data_model_t *model, const hmi_user_pref
     model->preferences.mdns_target[sizeof(model->preferences.mdns_target) - 1] = '\0';
     model->preferences.dark_theme = prefs->dark_theme;
     model->preferences.use_fahrenheit = prefs->use_fahrenheit;
+    model->preferences.high_contrast = prefs->high_contrast;
+    model->preferences.large_touch_targets = prefs->large_touch_targets;
+    model->preferences.text_scale_percent = prefs->text_scale_percent;
+    model->preferences.language = (prefs->language < HMI_LANGUAGE_MAX) ? prefs->language : HMI_LANGUAGE_EN;
     hmi_model_unlock(model);
 }
 

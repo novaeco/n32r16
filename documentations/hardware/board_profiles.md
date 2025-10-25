@@ -8,8 +8,8 @@ ship with the repository. All firmware is built on ESP-IDF v5.5.1.
 | Node          | Recommended module                            | Display            | Default overlay                  |
 |---------------|------------------------------------------------|--------------------|----------------------------------|
 | Sensor node   | ESP32-S3-WROOM-2-N32R16V (16 MB PSRAM / 32 MB) | —                  | `sdkconfig.defaults`             |
-| Sensor (alt)  | ESP32-S2-WROVER (8 MB flash / 2 MB PSRAM)      | —                  | `configs/esp32s2/sdkconfig.defaults` |
-| Sensor (alt)  | ESP32-C3-MINI (4 MB flash)                     | —                  | `configs/esp32c3/sdkconfig.defaults` |
+| Sensor (alt)  | ESP32-S2-WROVER (8 MB flash / 2 MB PSRAM)      | —                  | `../configs/esp32s2/sdkconfig.defaults` |
+| Sensor (alt)  | ESP32-C3-MINI (4 MB flash)                     | —                  | `../configs/esp32c3/sdkconfig.defaults` |
 | HMI node      | Waveshare ESP32-S3 Touch LCD 7B (1024×600)     | 7" RGB w/ GT911    | `sdkconfig.defaults`             |
 
 The S2 and C3 overlays lower flash expectations while retaining dual OTA slots and SPIFFS storage for certificate overrides. OTA
@@ -56,11 +56,11 @@ idf.py set-target esp32s3 build
 
 # ESP32-S2 sensor variant
 idf.py set-target esp32s2 \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;configs/esp32s2/sdkconfig.defaults" build
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;../configs/esp32s2/sdkconfig.defaults" build
 
 # ESP32-C3 sensor variant
 idf.py set-target esp32c3 \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;configs/esp32c3/sdkconfig.defaults" build
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;../configs/esp32c3/sdkconfig.defaults" build
 ```
 
 ## OTA & Certificate Storage

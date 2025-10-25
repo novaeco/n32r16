@@ -23,6 +23,12 @@ static void sanitize_preferences(hmi_user_preferences_t *prefs)
     prefs->ssid[sizeof(prefs->ssid) - 1] = '\0';
     prefs->password[sizeof(prefs->password) - 1] = '\0';
     prefs->mdns_target[sizeof(prefs->mdns_target) - 1] = '\0';
+    if (prefs->text_scale_percent < 80 || prefs->text_scale_percent > 140) {
+        prefs->text_scale_percent = 100;
+    }
+    if (prefs->language >= HMI_LANGUAGE_MAX) {
+        prefs->language = HMI_LANGUAGE_EN;
+    }
 }
 
 static esp_err_t ensure_secure_nvs(void)

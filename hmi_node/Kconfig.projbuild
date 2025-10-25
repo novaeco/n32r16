@@ -44,6 +44,24 @@ menu "HMI Node Options"
     config HMI_WS_CRYPTO_SECRET_BASE64
         string "WebSocket shared secret (Base64)"
         default ""
+    config HMI_WS_ENABLE_TOTP
+        bool "Send TOTP header on WebSocket handshake"
+        default n
+    config HMI_WS_TOTP_SECRET_BASE32
+        string "TOTP shared secret (Base32)"
+        default ""
+    config HMI_WS_TOTP_PERIOD_S
+        int "TOTP time-step (seconds)"
+        range 15 120
+        default 30
+    config HMI_WS_TOTP_DIGITS
+        int "TOTP code digits"
+        range 6 8
+        default 8
+    config HMI_WS_TOTP_WINDOW
+        int "Accepted TOTP window"
+        range 0 4
+        default 1
     config HMI_WS_TLS_SNI_OVERRIDE
         string "TLS server name override"
         default ""

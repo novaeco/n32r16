@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.2.0 - 2025-10-25
+
+- feat(ui): add LVGL animations, localisation, and accessibility controls with persistent preferences
+- feat(platform): ship verified ESP32-S2/C3 overlay profiles and automated semantic tagging helper
+- docs: embed UI screenshots, release workflow updates, and hardware profile guidance
+- test: add LVGL preference dispatch tests plus WebSocket tamper/load regression coverage
+- chore: introduce repository VERSION file and Pillow-based asset regeneration workflow
+
+## v1.1.0 - 2024-06-05
+
+- feat(security): add WebSocket TOTP two-factor verification and Base32 secret support
+- feat(ui): size LVGL draw buffers dynamically from runtime memory profiles
+- docs: describe TOTP provisioning and adaptive memory management in README/documentation
+- chore: add GitHub issue templates for bugs and feature requests
+- test: extend ws_client/ws_server/ws_security suites for TOTP and header regeneration
+
 ## v1.0.0 - 2024-05-13
 
 - feat(security): add AES-GCM frame encryption and HMAC handshake for WebSocket links

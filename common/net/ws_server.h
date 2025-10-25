@@ -25,6 +25,13 @@ typedef struct {
     bool enable_handshake_token;
     uint32_t handshake_replay_window_ms;
     size_t handshake_cache_size;
+    bool enable_totp;
+    const uint8_t *totp_secret;
+    size_t totp_secret_len;
+    uint32_t totp_period_s;
+    uint8_t totp_digits;
+    uint32_t totp_window;
+    uint64_t (*get_time_unix)(void);
 } ws_server_config_t;
 
 typedef void (*ws_server_rx_cb_t)(const uint8_t *data, size_t len, uint32_t crc32, void *ctx);

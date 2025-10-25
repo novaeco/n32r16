@@ -27,6 +27,13 @@ typedef struct {
     size_t crypto_secret_len;
     bool enable_frame_encryption;
     bool enable_handshake_token;
+    bool enable_totp;
+    const uint8_t *totp_secret;
+    size_t totp_secret_len;
+    uint32_t totp_period_s;
+    uint8_t totp_digits;
+    uint32_t totp_window;
+    uint64_t (*get_time_unix)(void);
 } ws_client_config_t;
 
 typedef struct {

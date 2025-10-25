@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct {
     int fd;
@@ -34,6 +35,7 @@ static StaticSemaphore_t s_client_lock_storage;
 static TimerHandle_t s_ping_timer;
 static uint8_t *s_rx_buffer;
 static ws_security_context_t s_security_ctx;
+static uint64_t (*s_time_fn)(void);
 
 typedef struct {
     bool valid;
@@ -377,6 +379,39 @@ static bool parse_nonce_hex(const char *hex, uint8_t *out)
     return true;
 }
 
+static bool parse_decimal_header(const char *value, uint8_t digits, uint32_t *code)
+{
+    if (!value || !code || digits < 1U || digits > 8U) {
+        return false;
+    }
+    size_t len = strlen(value);
+    if (len != digits) {
+        return false;
+    }
+    uint32_t acc = 0;
+    for (size_t i = 0; i < len; ++i) {
+        char c = value[i];
+        if (!isdigit((unsigned char)c)) {
+            return false;
+        }
+        acc = acc * 10U + (uint32_t)(c - '0');
+    }
+    *code = acc;
+    return true;
+}
+
+static uint64_t get_authorize_time(void)
+{
+    if (s_time_fn) {
+        return s_time_fn();
+    }
+    time_t now = time(NULL);
+    if (now < 0) {
+        return 0;
+    }
+    return (uint64_t)now;
+}
+
 static bool nonce_is_duplicate(const uint8_t *nonce, TickType_t now)
 {
     if (!s_nonce_cache || s_nonce_capacity == 0) {
@@ -551,51 +586,73 @@ static bool authorize_request(httpd_req_t *req)
         }
     }
 
-    if (!ws_security_is_handshake_enabled(&s_security_ctx)) {
-        return true;
+    if (ws_security_is_handshake_enabled(&s_security_ctx)) {
+        char nonce_hex[WS_SECURITY_NONCE_LEN * 2U + 1U];
+        memset(nonce_hex, 0, sizeof(nonce_hex));
+        if (httpd_req_get_hdr_value_str(req, "X-WS-Nonce", nonce_hex, sizeof(nonce_hex)) != ESP_OK) {
+            ESP_LOGW(TAG, "Missing X-WS-Nonce header");
+            return false;
+        }
+        if (strlen(nonce_hex) != WS_SECURITY_NONCE_LEN * 2U) {
+            ESP_LOGW(TAG, "Invalid nonce length");
+            return false;
+        }
+        uint8_t nonce[WS_SECURITY_NONCE_LEN] = {0};
+        if (!parse_nonce_hex(nonce_hex, nonce)) {
+            ESP_LOGW(TAG, "Nonce hex decoding failed");
+            return false;
+        }
+
+        char signature_b64[160] = {0};
+        if (httpd_req_get_hdr_value_str(req, "X-WS-Signature", signature_b64, sizeof(signature_b64)) != ESP_OK) {
+            ESP_LOGW(TAG, "Missing X-WS-Signature header");
+            return false;
+        }
+        uint8_t signature[64] = {0};
+        size_t signature_len = 0;
+        if (base64_utils_decode(signature_b64, signature, sizeof(signature), &signature_len) != ESP_OK) {
+            ESP_LOGW(TAG, "Signature base64 decode failed");
+            return false;
+        }
+
+        TickType_t now_ticks = s_platform->task_get_tick_count();
+        if (nonce_is_duplicate(nonce, now_ticks)) {
+            ESP_LOGW(TAG, "Nonce replay detected");
+            return false;
+        }
+
+        esp_err_t err = ws_security_verify_handshake(&s_security_ctx, nonce, sizeof(nonce), token, signature,
+                                                     signature_len);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Handshake verification failed: %s", esp_err_to_name(err));
+            return false;
+        }
+        nonce_store(nonce, now_ticks);
     }
 
-    char nonce_hex[WS_SECURITY_NONCE_LEN * 2U + 1U];
-    memset(nonce_hex, 0, sizeof(nonce_hex));
-    if (httpd_req_get_hdr_value_str(req, "X-WS-Nonce", nonce_hex, sizeof(nonce_hex)) != ESP_OK) {
-        ESP_LOGW(TAG, "Missing X-WS-Nonce header");
-        return false;
+    if (ws_security_is_totp_enabled(&s_security_ctx)) {
+        char totp_header[16] = {0};
+        if (httpd_req_get_hdr_value_str(req, "X-WS-TOTP", totp_header, sizeof(totp_header)) != ESP_OK) {
+            ESP_LOGW(TAG, "Missing X-WS-TOTP header");
+            return false;
+        }
+        uint32_t totp_code = 0;
+        uint8_t digits = ws_security_totp_digits(&s_security_ctx);
+        if (!parse_decimal_header(totp_header, digits, &totp_code)) {
+            ESP_LOGW(TAG, "Invalid TOTP format");
+            return false;
+        }
+        bool match = false;
+        esp_err_t err = ws_security_verify_totp(&s_security_ctx, get_authorize_time(), totp_code, &match);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "TOTP verification failed: %s", esp_err_to_name(err));
+            return false;
+        }
+        if (!match) {
+            ESP_LOGW(TAG, "TOTP verification failed: code mismatch");
+            return false;
+        }
     }
-    if (strlen(nonce_hex) != WS_SECURITY_NONCE_LEN * 2U) {
-        ESP_LOGW(TAG, "Invalid nonce length");
-        return false;
-    }
-    uint8_t nonce[WS_SECURITY_NONCE_LEN] = {0};
-    if (!parse_nonce_hex(nonce_hex, nonce)) {
-        ESP_LOGW(TAG, "Nonce hex decoding failed");
-        return false;
-    }
-
-    char signature_b64[160] = {0};
-    if (httpd_req_get_hdr_value_str(req, "X-WS-Signature", signature_b64, sizeof(signature_b64)) != ESP_OK) {
-        ESP_LOGW(TAG, "Missing X-WS-Signature header");
-        return false;
-    }
-    uint8_t signature[64] = {0};
-    size_t signature_len = 0;
-    if (base64_utils_decode(signature_b64, signature, sizeof(signature), &signature_len) != ESP_OK) {
-        ESP_LOGW(TAG, "Signature base64 decode failed");
-        return false;
-    }
-
-    TickType_t now = s_platform->task_get_tick_count();
-    if (nonce_is_duplicate(nonce, now)) {
-        ESP_LOGW(TAG, "Nonce replay detected");
-        return false;
-    }
-
-    esp_err_t err = ws_security_verify_handshake(&s_security_ctx, nonce, sizeof(nonce), token, signature,
-                                                 signature_len);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Handshake verification failed: %s", esp_err_to_name(err));
-        return false;
-    }
-    nonce_store(nonce, now);
     return true;
 }
 
@@ -816,6 +873,7 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
 
     memset(&s_cfg, 0, sizeof(s_cfg));
     s_cfg = *config;
+    s_time_fn = s_cfg.get_time_unix;
     if (s_cfg.max_clients == 0) {
         s_cfg.max_clients = 4;
     }
@@ -839,12 +897,26 @@ esp_err_t ws_server_start(const ws_server_config_t *config, ws_server_rx_cb_t cb
     if (s_cfg.handshake_cache_size == 0) {
         s_cfg.handshake_cache_size = s_cfg.max_clients ? s_cfg.max_clients * 4U : 16U;
     }
+    if (s_cfg.enable_totp) {
+        if (!s_cfg.totp_secret || s_cfg.totp_secret_len == 0) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (s_cfg.totp_digits < 6 || s_cfg.totp_digits > 8 || s_cfg.totp_period_s == 0) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
 
     ws_security_config_t sec_cfg = {
         .secret = s_cfg.crypto_secret,
         .secret_len = s_cfg.crypto_secret_len,
         .enable_encryption = s_cfg.enable_frame_encryption,
         .enable_handshake = s_cfg.enable_handshake_token,
+        .enable_totp = s_cfg.enable_totp,
+        .totp_secret = s_cfg.totp_secret,
+        .totp_secret_len = s_cfg.totp_secret_len,
+        .totp_period_s = s_cfg.totp_period_s,
+        .totp_digits = s_cfg.totp_digits,
+        .totp_window = s_cfg.totp_window,
     };
     esp_err_t sec_err = ws_security_context_init(&s_security_ctx, &sec_cfg);
     if (sec_err != ESP_OK) {
@@ -1003,6 +1075,7 @@ void ws_server_stop(void)
     s_nonce_capacity = 0;
     s_nonce_ttl_ticks = 0;
     memset(&s_security_ctx, 0, sizeof(s_security_ctx));
+    s_time_fn = NULL;
 }
 
 /**

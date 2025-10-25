@@ -6,6 +6,7 @@
 #include "cert_store.h"
 #include "common/net/wifi_manager.h"
 #include "common/ota/ota_update.h"
+#include "common/util/memory_profile.h"
 #include "data_model.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -57,6 +58,8 @@ void app_main(void)
     hmi_validate_runtime_secrets();
 
     ESP_LOGI(TAG, "Booting HMI node");
+    ESP_ERROR_CHECK(memory_profile_init());
+    memory_profile_log();
     hmi_data_model_t model;
     hmi_data_model_init(&model);
 

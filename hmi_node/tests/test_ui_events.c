@@ -95,6 +95,10 @@ void setUp(void)
         .mdns_target = "sensor",
         .dark_theme = false,
         .use_fahrenheit = false,
+        .high_contrast = false,
+        .large_touch_targets = false,
+        .text_scale_percent = 100,
+        .language = HMI_LANGUAGE_EN,
     };
     ui_set_active_prefs_for_test(&defaults);
 }
@@ -132,13 +136,17 @@ TEST_CASE("ui pwm handlers forward slider and frequency changes", "[hmi][ui]")
 
 TEST_CASE("ui preferences dispatcher merges and forwards", "[hmi][ui]")
 {
-    ui_test_apply_preferences_inputs("new-ssid", "secret", "target", true, true);
+    ui_test_apply_preferences_inputs("new-ssid", "secret", "target", true, true, true, true, 120, HMI_LANGUAGE_FR);
     TEST_ASSERT_EQUAL(1, s_prefs_invocation.calls);
     TEST_ASSERT_EQUAL_STRING("new-ssid", s_prefs_invocation.prefs.ssid);
     TEST_ASSERT_EQUAL_STRING("secret", s_prefs_invocation.prefs.password);
     TEST_ASSERT_EQUAL_STRING("target", s_prefs_invocation.prefs.mdns_target);
     TEST_ASSERT_TRUE(s_prefs_invocation.prefs.dark_theme);
     TEST_ASSERT_TRUE(s_prefs_invocation.prefs.use_fahrenheit);
+    TEST_ASSERT_TRUE(s_prefs_invocation.prefs.high_contrast);
+    TEST_ASSERT_TRUE(s_prefs_invocation.prefs.large_touch_targets);
+    TEST_ASSERT_EQUAL_UINT8(120, s_prefs_invocation.prefs.text_scale_percent);
+    TEST_ASSERT_EQUAL(HMI_LANGUAGE_FR, s_prefs_invocation.prefs.language);
 }
 
 TEST_CASE("ui reset preferences dispatches callback", "[hmi][ui]")

@@ -2,6 +2,10 @@
 
 Firmware for a two-node ESP32-S3 platform delivering real-time sensor acquisition, remote GPIO/PWM control, and a rich LVGL-based HMI. The project targets ESP-IDF v5.5 and adheres to Apache-2.0 licensing.
 
+## User Interface Preview
+
+Detailed walkthrough clips (including provisioning and OTA upgrade flows) are published in `documentations/demo_capture.md`.
+
 ## Hardware Overview
 
 ### Sensor Node (ESP32-S3-WROOM-2-N32R16V)
@@ -36,9 +40,13 @@ Firmware for a two-node ESP32-S3 platform delivering real-time sensor acquisitio
 ```
 
 ## Build Requirements
-- ESP-IDF v5.5 (container `espressif/idf:release-v5.5` recommended).
+- ESP-IDF v5.5 (container `espressif/idf:release-v5.5` recommended). Install via `./install.sh esp32s3` on a workstation, or use the
+  provided Docker container recipe in `documentations/installation_guide.md`.
 - CMake/Ninja toolchain automatically provided by ESP-IDF.
-- Targets: `esp32s3` with PSRAM and 32 MB OPI flash.
+- Python 3.11 with `pip` and the dependencies enumerated in `requirements.txt` (install with `python -m pip install -r requirements.txt`).
+- `ffmpeg` (for UI capture) and `pillow` (for regenerating screenshots) available on the host when updating documentation assets.
+- Targets: `esp32s3` with PSRAM and 32 MB OPI flash by default. Overlay profiles for ESP32-S2 and ESP32-C3 are provided under
+  `configs/` and can be combined via `SDKCONFIG_DEFAULTS`.
 
 ## Code Quality & Static Analysis
 - **Clang-Format** – Use the repository root `.clang-format` profile: `clang-format -i $(git ls-files '*.c' '*.h')` prior to
@@ -46,15 +54,24 @@ Firmware for a two-node ESP32-S3 platform delivering real-time sensor acquisitio
   recognised; older releases will silently ignore the rule set.
 - **Clang-Tidy** – After running `idf.py build` (to generate `build/compile_commands.json`), execute
   `clang-tidy -p build $(git ls-files '*.c')` from the corresponding project directory.
-- **Unit Tests** – Execute `idf.py -T` within `sensor_node/` and `common/proto/` to run mocked driver (SHT20, DS18B20, MCP23017,
-  PCA9685) and protocol CRC/serialization tests whenever functionality changes.
-  committing changes.
+- **Unit Tests** – Execute `idf.py -T` within `sensor_node/` and `hmi_node/` to run the Unity-backed driver and protocol suites
+  whenever functionality changes.
 - **Clang-Tidy** – After running `idf.py build` (to generate `build/compile_commands.json`), execute
   `clang-tidy -p build $(git ls-files '*.c')` from the corresponding project directory.
-- **Unit Tests** – Execute `idf.py -T` to run the protocol and driver unit tests when relevant changes are made.
 - **Tests E2E sécurité** – Valider la dérivation des clés WebSocket et les vecteurs HMAC via `pytest tests/e2e/test_ws_handshake_vectors.py`.
+- **Tests E2E performance** – Vérifier la robustesse des HMAC/TOTP sous charge via `pytest tests/e2e/test_ws_performance.py`.
 
 ## Quick Start
+
+### 0. Select the hardware profile
+
+Pick the default ESP32-S3 build or extend it with an overlay profile:
+
+```bash
+# Example: sensor node targeting ESP32-C3
+idf.py set-target esp32c3 \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;../configs/esp32c3/sdkconfig.defaults" build
+```
 
 ### 1. Configure Toolchain
 ```bash
@@ -97,19 +114,62 @@ The repository ships tuned configuration overlays for memory-constrained ESP32 v
 | Module           | Flash size | PSRAM | Overlay                                      |
 |------------------|------------|-------|----------------------------------------------|
 | ESP32-S3         | 32 MB OPI  | 16 MB | _default_ (no overlay required)              |
-| ESP32-S2-WROVER  | 8 MB QIO   | 2 MB  | `configs/esp32s2/sdkconfig.defaults`         |
-| ESP32-C3 modules | 4 MB DIO   | —     | `configs/esp32c3/sdkconfig.defaults`         |
+| ESP32-S2-WROVER  | 8 MB QIO   | —     | `../configs/esp32s2/sdkconfig.defaults`      |
+| ESP32-C3 modules | 4 MB DIO   | —     | `../configs/esp32c3/sdkconfig.defaults`      |
 
 Example for the sensor node on ESP32-S2:
 
 ```bash
 idf.py set-target esp32s2 \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;configs/esp32s2/sdkconfig.defaults" build
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;../configs/esp32s2/sdkconfig.defaults" build
 ```
 
 The overlays adjust flash geometry, CPU frequency, and partition tables (`partitions/esp32s2_8MB.csv`,
 `partitions/esp32c3_4MB.csv`) to maintain OTA headroom while honouring the reduced memory footprint. The default Wi-Fi and
 provisioning credentials remain identical across profiles to ease mixed deployments.
+
+## Versioning & Release Workflow
+
+The repository version is tracked in the root `VERSION` file. New releases are created by updating the changelog, bumping
+`VERSION`, and then running the helper script:
+
+```bash
+python tools/release/tag_version.py --dry-run  # inspect
+python tools/release/tag_version.py            # creates signed tag vX.Y.Z
+```
+
+Tags follow [Semantic Versioning](https://semver.org/) and are signed by default. CI pipelines consume the tag annotations to
+populate release notes and firmware artefact names.
+
+## Adaptive Memory Management
+
+Both applications initialise the shared `common/util/memory_profile` helper at boot to capture chip model, flash/PSRAM geometry,
+and heap availability. The data is surfaced in the boot log and consumed by the HMI LVGL port to right-size the double-buffer:
+PSRAM-rich boards receive full-frame buffers while constrained targets fall back to fractional screen slices (minimum 40 lines).
+The helper is available to other components via `memory_profile_get()` for future dynamic allocations.
+
+## Accessibility & Localisation
+
+The HMI exposes an accessibility drawer (Settings → Accessibility) that controls:
+
+- **Language selection** – toggle between English and French copy for all static UI strings.
+- **High-contrast palette** – swaps the LVGL palette for WCAG-compliant colours with accent outlines on focusable widgets.
+- **Text scaling** – multiplies the LVGL display zoom between 80% and 140% for improved readability.
+- **Large touch targets** – increases padding on toggles and buttons when accessibility mode is enabled.
+
+All preferences persist in encrypted NVS and are replayed at boot across all hardware profiles.
+
+## Mobile & Browser Compatibility
+
+Progressive web dashboards backed by the same WebSocket stack are exercised using the workflow described in
+[`documentations/compatibility/mobile_validation.md`](documentations/compatibility/mobile_validation.md). The guide covers:
+
+- Mobile Safari (iOS 17) and Chrome (Android 14) connection tests against the sensor node mock server.
+- Verifying responsive layout breakpoints for 360–1024 px viewports using the LVGL web simulator build.
+- Network throttling and packet loss scenarios using Chrome DevTools to mimic lossy 4G links before pushing firmware updates.
+
+The automated regression suite (`pytest tests/e2e`) is device-agnostic and validates the framing/encryption logic consumed by both
+desktop and mobile clients.
 
 ### Sensor Node Kconfig Highlights
 
@@ -134,6 +194,10 @@ provisioning credentials remain identical across profiles to ease mixed deployme
   `X-WS-Signature`. Enable `CONFIG_SENSOR_WS_ENABLE_HANDSHAKE` / `CONFIG_HMI_WS_ENABLE_HANDSHAKE` and populate
   `CONFIG_SENSOR_WS_CRYPTO_SECRET_BASE64` / `CONFIG_HMI_WS_CRYPTO_SECRET_BASE64`. Replay detection is governed by
   `CONFIG_SENSOR_WS_HANDSHAKE_TTL_MS` and `CONFIG_SENSOR_WS_HANDSHAKE_CACHE_SIZE`.
+- **TOTP two-factor header** – Enabling `CONFIG_SENSOR_WS_ENABLE_TOTP` / `CONFIG_HMI_WS_ENABLE_TOTP` requires clients to present
+  an `X-WS-TOTP` header generated from a shared Base32 secret (`*_WS_TOTP_SECRET_BASE32`). The default 30-second, 8-digit TOTP
+  profile tolerates ±1 step drift. Detailed provisioning steps live in
+  [`documentations/security_websocket_totp.md`](documentations/security_websocket_totp.md).
 - **AES-GCM payload confidentiality** – Activate `CONFIG_SENSOR_WS_ENABLE_ENCRYPTION` and `CONFIG_HMI_WS_ENABLE_ENCRYPTION` to
   wrap CRC-framed telemetry/command payloads in 256-bit AES-GCM envelopes. Ciphertext length expands by
   `WS_SECURITY_HEADER_LEN + WS_SECURITY_TAG_LEN` (28 bytes) relative to the plaintext frame.
